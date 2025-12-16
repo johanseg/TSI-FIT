@@ -1,0 +1,31 @@
+{
+  "direct_api_format": {
+    "lead_id": "external_123",
+    "salesforce_lead_id": "00Qxxxxxxxxxxxx",
+    "business_name": "ABC Roofing",
+    "website": "https://abcroofing.com",
+    "phone": "+15551234567",
+    "email": "owner@abcroofing.com",
+    "utm_source": "facebook",
+    "fbclid": "xxx",
+    "gclid": "",
+    "ttclid": "",
+    "city": "Austin",
+    "state": "TX"
+  },
+  "landerlab_webhook_format": {
+    "id": "external_123",
+    "salesforce_lead_id": "00Qxxxxxxxxxxxx",
+    "company_name": "ABC Roofing",
+    "website": "https://abcroofing.com",
+    "phone": "+15551234567",
+    "email": "owner@abcroofing.com",
+    "utm_source": "facebook",
+    "fbclid": "xxx",
+    "gclid": "",
+    "ttclid": "",
+    "city": "Austin",
+    "state": "TX"
+  }
+}
+

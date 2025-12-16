@@ -1,0 +1,95 @@
+services:
+  # API Service
+  - type: web
+    name: tsi-fit-score-api
+    env: node
+    region: oregon
+    plan: starter
+    buildCommand: cd api && npm install && npm run build
+    startCommand: cd api && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tsi-fit-score-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: tsi-fit-score-redis
+          type: redis
+          property: connectionString
+      - key: GOOGLE_PLACES_API_KEY
+        sync: false
+      - key: CLAY_API_KEY
+        sync: false
+      - key: SFDC_LOGIN_URL
+        value: https://login.salesforce.com
+      - key: SFDC_CLIENT_ID
+        sync: false
+      - key: SFDC_CLIENT_SECRET
+        sync: false
+      - key: SFDC_USERNAME
+        sync: false
+      - key: SFDC_PASSWORD
+        sync: false
+      - key: SFDC_SECURITY_TOKEN
+        sync: false
+      - key: LOG_LEVEL
+        value: info
+
+  # Worker Service
+  - type: worker
+    name: tsi-fit-score-worker
+    env: node
+    region: oregon
+    plan: starter
+    buildCommand: cd worker && npm install && npm run build
+    startCommand: cd worker && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tsi-fit-score-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: tsi-fit-score-redis
+          type: redis
+          property: connectionString
+      - key: GOOGLE_PLACES_API_KEY
+        sync: false
+      - key: CLAY_API_KEY
+        sync: false
+      - key: SFDC_LOGIN_URL
+        value: https://login.salesforce.com
+      - key: SFDC_CLIENT_ID
+        sync: false
+      - key: SFDC_CLIENT_SECRET
+        sync: false
+      - key: SFDC_USERNAME
+        sync: false
+      - key: SFDC_PASSWORD
+        sync: false
+      - key: SFDC_SECURITY_TOKEN
+        sync: false
+      - key: LOG_LEVEL
+        value: info
+
+databases:
+  # PostgreSQL Database
+  - name: tsi-fit-score-db
+    databaseName: tsi_fit_score
+    user: tsi_fit_score_user
+    plan: starter
+    region: oregon
+
+  # Redis Key-Value Store
+  - name: tsi-fit-score-redis
+    type: redis
+    plan: starter
+    region: oregon
+
