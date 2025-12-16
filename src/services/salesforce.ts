@@ -213,5 +213,13 @@ export class SalesforceService {
       logger.info('Salesforce connection closed');
     }
   }
+
+  async query(soql: string): Promise<{ records: unknown[] }> {
+    await this.connect();
+    this.ensureConnected();
+
+    const result = await this.connection!.query(soql);
+    return { records: result.records };
+  }
 }
 

@@ -13,6 +13,7 @@ import { WebsiteTechService } from './services/websiteTech';
 import { calculateFitScore } from './services/fitScore';
 import { SalesforceService } from './services/salesforce';
 import { EnrichmentProcessor } from './processors/enrichLead';
+import { DashboardStatsService } from './services/dashboardStats';
 
 // Types
 import { LeadPayload, EnrichmentJobData } from './types/lead';
@@ -87,9 +88,37 @@ app.use((req, res, next) => {
   next();
 });
 
+// Serve static files for dashboard
+import path from 'path';
+app.use('/dashboard', express.static(path.join(__dirname, '../public')));
+
 // Health check
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Dashboard stats API
+app.get('/api/dashboard/stats', async (req, res) => {
+  try {
+    const daysBack = parseInt(req.query.days as string) || 30;
+
+    const salesforce = new SalesforceService({
+      loginUrl: process.env.SFDC_LOGIN_URL || 'https://login.salesforce.com',
+      clientId: process.env.SFDC_CLIENT_ID || '',
+      clientSecret: process.env.SFDC_CLIENT_SECRET || '',
+      username: process.env.SFDC_USERNAME || '',
+      password: process.env.SFDC_PASSWORD || '',
+      securityToken: process.env.SFDC_SECURITY_TOKEN || '',
+    });
+
+    const dashboardService = new DashboardStatsService(salesforce);
+    const stats = await dashboardService.getStats(daysBack);
+
+    res.json(stats);
+  } catch (error) {
+    logger.error('Failed to fetch dashboard stats', { error });
+    res.status(500).json({ error: 'Failed to fetch dashboard stats' });
+  }
 });
 
 // Lead ingestion
