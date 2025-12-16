@@ -82,7 +82,7 @@ services:
   # Redis Key-Value Store
   - type: keyvalue
     name: tsi-fit-score-redis
-    plan: starter
+    plan: free
     region: oregon
     maxmemoryPolicy: allkeys-lru
     ipAllowList:
@@ -94,5 +94,5 @@ databases:
   - name: tsi-fit-score-db
     databaseName: tsi_fit_score
     user: tsi_fit_score_user
-    plan: starter
+    plan: free
     region: oregon
