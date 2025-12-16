@@ -5,8 +5,8 @@ services:
     env: node
     region: oregon
     plan: starter
-    buildCommand: cd api && npm install && npm run build
-    startCommand: cd api && npm start
+    buildCommand: npm install && npm run build --workspace=shared && npm run build --workspace=api
+    startCommand: node api/dist/server.js
     envVars:
       - key: NODE_ENV
         value: production
@@ -46,8 +46,8 @@ services:
     env: node
     region: oregon
     plan: starter
-    buildCommand: cd worker && npm install && npm run build
-    startCommand: cd worker && npm start
+    buildCommand: npm install && npm run build --workspace=shared && npm run build --workspace=worker
+    startCommand: node worker/dist/worker.js
     envVars:
       - key: NODE_ENV
         value: production
