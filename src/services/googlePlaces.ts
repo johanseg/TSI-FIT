@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
-import { logger } from '@tsi-fit-score/shared';
-import { GooglePlacesData } from '@tsi-fit-score/shared';
+import { logger } from '../utils/logger';
+import { GooglePlacesData } from '../types/lead';
 import { retryWithBackoff, sleep } from '../utils/retry';
 
 const GOOGLE_PLACES_API_BASE = 'https://maps.googleapis.com/maps/api/place';

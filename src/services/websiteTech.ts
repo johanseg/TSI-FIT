@@ -1,6 +1,6 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
-import { logger } from '@tsi-fit-score/shared';
-import { WebsiteTechData } from '@tsi-fit-score/shared';
+import { logger } from '../utils/logger';
+import { WebsiteTechData } from '../types/lead';
 
 export class WebsiteTechService {
   private browser: Browser | null = null;

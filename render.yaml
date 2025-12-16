@@ -1,12 +1,12 @@
 services:
-  # API Service
+  # Combined API + Worker Service
   - type: web
-    name: tsi-fit-score-api
-    env: node
+    name: tsi-fit-score
+    runtime: node
     region: oregon
     plan: starter
-    buildCommand: npm install && npm run build --workspace=shared && npm run build --workspace=api
-    startCommand: node api/dist/server.js
+    buildCommand: npm install && npm run build
+    startCommand: node dist/index.js
     envVars:
       - key: NODE_ENV
         value: production
@@ -19,46 +19,7 @@ services:
       - key: REDIS_URL
         fromService:
           name: tsi-fit-score-redis
-          type: keyvalue
-          property: connectionString
-      - key: GOOGLE_PLACES_API_KEY
-        sync: false
-      - key: CLAY_API_KEY
-        sync: false
-      - key: SFDC_LOGIN_URL
-        value: https://login.salesforce.com
-      - key: SFDC_CLIENT_ID
-        sync: false
-      - key: SFDC_CLIENT_SECRET
-        sync: false
-      - key: SFDC_USERNAME
-        sync: false
-      - key: SFDC_PASSWORD
-        sync: false
-      - key: SFDC_SECURITY_TOKEN
-        sync: false
-      - key: LOG_LEVEL
-        value: info
-
-  # Worker Service
-  - type: worker
-    name: tsi-fit-score-worker
-    env: node
-    region: oregon
-    plan: starter
-    buildCommand: npm install && npm run build --workspace=shared && npm run build --workspace=worker
-    startCommand: node worker/dist/worker.js
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: DATABASE_URL
-        fromDatabase:
-          name: tsi-fit-score-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          name: tsi-fit-score-redis
-          type: keyvalue
+          type: kvs
           property: connectionString
       - key: GOOGLE_PLACES_API_KEY
         sync: false
@@ -80,7 +41,7 @@ services:
         value: info
 
   # Redis Key-Value Store
-  - type: keyvalue
+  - type: kvs
     name: tsi-fit-score-redis
     plan: free
     region: oregon

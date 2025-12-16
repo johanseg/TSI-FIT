@@ -1,6 +1,6 @@
 import jsforce, { Connection } from 'jsforce';
-import { logger } from '@tsi-fit-score/shared';
-import { EnrichmentData, FitScoreResult, GooglePlacesData, ClayData, WebsiteTechData } from '@tsi-fit-score/shared';
+import { logger } from '../utils/logger';
+import { EnrichmentData, FitScoreResult, WebsiteTechData } from '../types/lead';
 
 export interface SalesforceConfig {
   loginUrl: string;

@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
-import { logger } from '@tsi-fit-score/shared';
-import { ClayData, LeadPayload } from '@tsi-fit-score/shared';
+import { logger } from '../utils/logger';
+import { ClayData, LeadPayload } from '../types/lead';
 import { CircuitBreaker } from '../utils/circuitBreaker';
 import { retryWithBackoff } from '../utils/retry';
 

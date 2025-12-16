@@ -1,4 +1,4 @@
-import { logger } from '@tsi-fit-score/shared';
+import { logger } from './logger';
 
 export interface RetryOptions {
   maxRetries?: number;

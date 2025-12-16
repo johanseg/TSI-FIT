@@ -2,10 +2,13 @@ export interface LeadPayload {
   lead_id: string;
   salesforce_lead_id?: string;
   business_name: string;
+  contact_name?: string;
   website?: string;
   phone?: string;
   email?: string;
   utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
   fbclid?: string;
   gclid?: string;
   ttclid?: string;
@@ -109,7 +112,7 @@ export interface LeadEnrichmentRecord {
 }
 
 export interface EnrichmentJobData {
-  leadId: string; // UUID from leads table
+  leadRowId: string; // UUID from leads table
   leadPayload: LeadPayload;
 }
 

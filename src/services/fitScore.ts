@@ -2,10 +2,7 @@ import {
   EnrichmentData,
   FitScoreResult,
   ScoreBreakdown,
-  GooglePlacesData,
-  ClayData,
-  WebsiteTechData,
-} from '@tsi-fit-score/shared';
+} from '../types/lead';
 
 /**
  * Calculate Fit Score based on enrichment data

@@ -1,13 +1,12 @@
 import { Job } from 'bullmq';
-import { logger } from '@tsi-fit-score/shared';
+import { Pool } from 'pg';
+import { logger } from '../utils/logger';
 import {
   LeadPayload,
   EnrichmentData,
-  LeadRecord,
   LeadEnrichmentRecord,
   EnrichmentJobData,
-} from '@tsi-fit-score/shared';
-import { query } from '@tsi-fit-score/shared';
+} from '../types/lead';
 import { GooglePlacesService } from '../services/googlePlaces';
 import { ClayService } from '../services/clay';
 import { WebsiteTechService } from '../services/websiteTech';
@@ -15,60 +14,47 @@ import { calculateFitScore } from '../services/fitScore';
 import { SalesforceService } from '../services/salesforce';
 
 export class EnrichmentProcessor {
+  private pool: Pool;
   private googlePlaces: GooglePlacesService;
   private clay: ClayService;
   private websiteTech: WebsiteTechService;
   private salesforce: SalesforceService;
 
-  constructor() {
-    const googlePlacesApiKey = process.env.GOOGLE_PLACES_API_KEY;
-    if (!googlePlacesApiKey) {
-      throw new Error('GOOGLE_PLACES_API_KEY is required');
-    }
-    this.googlePlaces = new GooglePlacesService(googlePlacesApiKey);
-
-    const clayApiKey = process.env.CLAY_API_KEY;
-    if (!clayApiKey) {
-      throw new Error('CLAY_API_KEY is required');
-    }
-    this.clay = new ClayService(clayApiKey);
-
-    this.websiteTech = new WebsiteTechService();
-
-    const sfdcConfig = {
-      loginUrl: process.env.SFDC_LOGIN_URL || 'https://login.salesforce.com',
-      clientId: process.env.SFDC_CLIENT_ID || '',
-      clientSecret: process.env.SFDC_CLIENT_SECRET || '',
-      username: process.env.SFDC_USERNAME || '',
-      password: process.env.SFDC_PASSWORD || '',
-      securityToken: process.env.SFDC_SECURITY_TOKEN || '',
-    };
-    this.salesforce = new SalesforceService(sfdcConfig);
+  constructor(
+    pool: Pool,
+    googlePlaces: GooglePlacesService,
+    clay: ClayService,
+    websiteTech: WebsiteTechService,
+    salesforce: SalesforceService
+  ) {
+    this.pool = pool;
+    this.googlePlaces = googlePlaces;
+    this.clay = clay;
+    this.websiteTech = websiteTech;
+    this.salesforce = salesforce;
   }
 
   async process(job: Job<EnrichmentJobData>): Promise<void> {
-    const { leadId, leadPayload } = job.data;
+    const { leadRowId, leadPayload } = job.data;
     const jobId = job.id!;
 
     logger.info('Starting lead enrichment', {
       jobId,
-      leadId,
+      leadRowId,
       businessName: leadPayload.business_name,
     });
 
-    // Initialize enrichment record
-    let enrichmentRecord: LeadEnrichmentRecord | null = null;
     const enrichmentData: EnrichmentData = {};
     let enrichmentStatus: 'pending' | 'success' | 'partial' | 'failed' = 'pending';
     let errorMessage: string | undefined;
 
     try {
       // Create initial enrichment record
-      await this.createEnrichmentRecord(leadId, jobId);
+      await this.createEnrichmentRecord(leadRowId, jobId);
 
       // Step 1: Google Places enrichment
       try {
-        logger.info('Enriching with Google Places', { jobId, leadId });
+        logger.info('Enriching with Google Places', { jobId, leadRowId });
         const googlePlacesData = await this.googlePlaces.enrich(
           leadPayload.business_name,
           leadPayload.phone,
@@ -77,64 +63,61 @@ export class EnrichmentProcessor {
         );
         if (googlePlacesData) {
           enrichmentData.google_places = googlePlacesData;
-          await this.updateEnrichmentRecord(leadId, jobId, {
+          await this.updateEnrichmentRecord(leadRowId, jobId, {
             google_places_data: googlePlacesData,
           });
         }
       } catch (error) {
         logger.warn('Google Places enrichment failed', {
           jobId,
-          leadId,
+          leadRowId,
           error: error instanceof Error ? error.message : String(error),
         });
-        // Continue with other enrichments
       }
 
       // Step 2: Website tech detection
       if (leadPayload.website) {
         try {
-          logger.info('Detecting website tech', { jobId, leadId, website: leadPayload.website });
+          logger.info('Detecting website tech', { jobId, leadRowId, website: leadPayload.website });
           const websiteTechData = await this.websiteTech.detectTech(leadPayload.website);
           enrichmentData.website_tech = websiteTechData;
-          await this.updateEnrichmentRecord(leadId, jobId, {
+          await this.updateEnrichmentRecord(leadRowId, jobId, {
             website_tech_data: websiteTechData,
           });
         } catch (error) {
           logger.warn('Website tech detection failed', {
             jobId,
-            leadId,
+            leadRowId,
             error: error instanceof Error ? error.message : String(error),
           });
-          // Continue with other enrichments
         }
       }
 
       // Step 3: Clay enrichment
       try {
-        logger.info('Enriching with Clay', { jobId, leadId });
+        logger.info('Enriching with Clay', { jobId, leadRowId });
         const clayData = await this.clay.enrichLead(leadPayload);
         if (clayData) {
           enrichmentData.clay = clayData;
-          await this.updateEnrichmentRecord(leadId, jobId, {
+          await this.updateEnrichmentRecord(leadRowId, jobId, {
             clay_data: clayData,
           });
         }
       } catch (error) {
         logger.warn('Clay enrichment failed', {
           jobId,
-          leadId,
+          leadRowId,
           error: error instanceof Error ? error.message : String(error),
         });
-        // Continue with scoring
       }
 
       // Step 4: Calculate Fit Score
       let fitScoreResult;
       try {
-        logger.info('Calculating Fit Score', { jobId, leadId });
+        logger.info('Calculating Fit Score', { jobId, leadRowId });
         fitScoreResult = calculateFitScore(enrichmentData);
-        
-        await this.updateEnrichmentRecord(leadId, jobId, {
+
+        await this.updateEnrichmentRecord(leadRowId, jobId, {
           fit_score: fitScoreResult.fit_score,
           fit_tier: fitScoreResult.fit_tier,
           score_breakdown: fitScoreResult.score_breakdown,
@@ -142,10 +125,10 @@ export class EnrichmentProcessor {
       } catch (error) {
         logger.error('Fit Score calculation failed', {
           jobId,
-          leadId,
+          leadRowId,
           error: error instanceof Error ? error.message : String(error),
         });
-        throw error; // Fail the job if scoring fails
+        throw error;
       }
 
       // Step 5: Update Salesforce
@@ -153,7 +136,7 @@ export class EnrichmentProcessor {
         try {
           logger.info('Updating Salesforce Lead', {
             jobId,
-            leadId,
+            leadRowId,
             salesforceLeadId: leadPayload.salesforce_lead_id,
           });
           const updated = await this.salesforce.updateLead(
@@ -163,7 +146,7 @@ export class EnrichmentProcessor {
           );
 
           if (updated) {
-            await this.updateEnrichmentRecord(leadId, jobId, {
+            await this.updateEnrichmentRecord(leadRowId, jobId, {
               salesforce_updated: true,
               salesforce_updated_at: new Date(),
             });
@@ -171,10 +154,9 @@ export class EnrichmentProcessor {
         } catch (error) {
           logger.error('Salesforce update failed', {
             jobId,
-            leadId,
+            leadRowId,
             error: error instanceof Error ? error.message : String(error),
           });
-          // Don't fail the job if Salesforce update fails
         }
       }
 
@@ -193,14 +175,14 @@ export class EnrichmentProcessor {
         errorMessage = 'No enrichment data collected';
       }
 
-      await this.updateEnrichmentRecord(leadId, jobId, {
+      await this.updateEnrichmentRecord(leadRowId, jobId, {
         enrichment_status: enrichmentStatus,
         error_message: errorMessage,
       });
 
       logger.info('Lead enrichment completed', {
         jobId,
-        leadId,
+        leadRowId,
         status: enrichmentStatus,
         fitScore: fitScoreResult?.fit_score,
       });
@@ -210,20 +192,18 @@ export class EnrichmentProcessor {
 
       logger.error('Lead enrichment failed', {
         jobId,
-        leadId,
+        leadRowId,
         error: errorMessage,
       });
 
-      await this.updateEnrichmentRecord(leadId, jobId, {
+      await this.updateEnrichmentRecord(leadRowId, jobId, {
         enrichment_status: enrichmentStatus,
         error_message: errorMessage,
       });
 
       throw error;
     } finally {
-      // Cleanup
       await this.websiteTech.close();
-      await this.salesforce.disconnect();
     }
   }
 
@@ -231,7 +211,7 @@ export class EnrichmentProcessor {
     leadId: string,
     jobId: string
   ): Promise<void> {
-    await query(
+    await this.pool.query(
       `INSERT INTO lead_enrichments (lead_id, job_id, enrichment_status)
        VALUES ($1, $2, 'pending')
        ON CONFLICT DO NOTHING`,
@@ -314,7 +294,7 @@ export class EnrichmentProcessor {
 
     values.push(leadId, jobId);
 
-    await query(
+    await this.pool.query(
       `UPDATE lead_enrichments
        SET ${fields.join(', ')}
        WHERE lead_id = $${paramIndex} AND job_id = $${paramIndex + 1}`,
@@ -322,4 +302,3 @@ export class EnrichmentProcessor {
     );
   }
 }
-
