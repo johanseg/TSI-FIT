@@ -19,7 +19,7 @@ services:
       - key: REDIS_URL
         fromService:
           name: tsi-fit-score-redis
-          type: redis
+          type: keyvalue
           property: connectionString
       - key: GOOGLE_PLACES_API_KEY
         sync: false
@@ -58,7 +58,7 @@ services:
       - key: REDIS_URL
         fromService:
           name: tsi-fit-score-redis
-          type: redis
+          type: keyvalue
           property: connectionString
       - key: GOOGLE_PLACES_API_KEY
         sync: false
@@ -79,6 +79,16 @@ services:
       - key: LOG_LEVEL
         value: info
 
+  # Redis Key-Value Store
+  - type: keyvalue
+    name: tsi-fit-score-redis
+    plan: starter
+    region: oregon
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: everywhere
+
 databases:
   # PostgreSQL Database
   - name: tsi-fit-score-db
@@ -86,10 +96,3 @@ databases:
     user: tsi_fit_score_user
     plan: starter
     region: oregon
-
-  # Redis Key-Value Store
-  - name: tsi-fit-score-redis
-    type: redis
-    plan: starter
-    region: oregon
-
