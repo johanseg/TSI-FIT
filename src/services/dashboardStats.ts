@@ -105,9 +105,10 @@ export class DashboardStatsService {
 
         try {
           // Second try: Query with existing Salesforce INPUT fields (from SALESFORCE_SCHEMA.md)
+          // Include Score__c which is the 0-5 enrichment score field
           const existingFieldsQuery = `
             SELECT Id, Company, LeadSource, Website, Phone, City, State,
-                   Has_Website__c, Has_GMB__c, GMB_URL__c,
+                   Score__c, Has_Website__c, Has_GMB__c, GMB_URL__c,
                    Number_of_Employees__c, Number_of_GBP_Reviews__c,
                    Number_of_Years_in_Business__c, Location_Type__c,
                    Business_License__c, Spending_on_Marketing__c,
@@ -143,15 +144,40 @@ export class DashboardStatsService {
     // Calculate overall stats
     const totalLeads = leads.length;
 
-    // A lead is "enriched" if it has a Fit Score
-    const enrichedLeads = leads.filter(lead => lead.Fit_Score__c !== null).length;
+    // Helper to check if a lead is "enriched"
+    // A lead is enriched if it has a Score__c value between 0-5, OR if Fit_Score__c is set
+    // Check multiple possible score fields depending on which query succeeded
+    const isEnriched = (lead: any): boolean => {
+      // Check Score__c (0-5 range) - primary enrichment indicator
+      if (lead.Score__c !== undefined && lead.Score__c !== null) {
+        return true;
+      }
+      // Check Fit_Score__c as fallback
+      if (lead.Fit_Score__c !== undefined && lead.Fit_Score__c !== null) {
+        return true;
+      }
+      return false;
+    };
+
+    // Get score value from lead (check both possible fields)
+    const getScore = (lead: any): number | null => {
+      if (lead.Score__c !== undefined && lead.Score__c !== null) {
+        return lead.Score__c;
+      }
+      if (lead.Fit_Score__c !== undefined && lead.Fit_Score__c !== null) {
+        return lead.Fit_Score__c;
+      }
+      return null;
+    };
+
+    const enrichedLeads = leads.filter(isEnriched).length;
     const unenrichedLeads = totalLeads - enrichedLeads;
     const enrichmentRate = totalLeads > 0 ? (enrichedLeads / totalLeads) * 100 : 0;
 
-    // Average Fit Score (0-100 scale)
-    const leadsWithScores = leads.filter(lead => lead.Fit_Score__c !== null);
+    // Average Fit Score
+    const leadsWithScores = leads.filter(lead => getScore(lead) !== null);
     const avgFitScore = leadsWithScores.length > 0
-      ? leadsWithScores.reduce((sum, lead) => sum + (lead.Fit_Score__c || 0), 0) / leadsWithScores.length
+      ? leadsWithScores.reduce((sum, lead) => sum + (getScore(lead) || 0), 0) / leadsWithScores.length
       : 0;
 
     // Tier distribution
@@ -170,10 +196,10 @@ export class DashboardStatsService {
     const byLeadSource: LeadSourceStats[] = [];
     for (const [leadSource, sourceLeads] of leadSourceMap) {
       const sourceTotalLeads = sourceLeads.length;
-      const sourceEnrichedLeads = sourceLeads.filter(lead => lead.Fit_Score__c !== null).length;
-      const sourceLeadsWithScores = sourceLeads.filter(lead => lead.Fit_Score__c !== null);
+      const sourceEnrichedLeads = sourceLeads.filter(isEnriched).length;
+      const sourceLeadsWithScores = sourceLeads.filter(lead => getScore(lead) !== null);
       const sourceAvgFitScore = sourceLeadsWithScores.length > 0
-        ? sourceLeadsWithScores.reduce((sum, lead) => sum + (lead.Fit_Score__c || 0), 0) / sourceLeadsWithScores.length
+        ? sourceLeadsWithScores.reduce((sum, lead) => sum + (getScore(lead) || 0), 0) / sourceLeadsWithScores.length
         : 0;
 
       byLeadSource.push({
