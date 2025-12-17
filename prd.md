@@ -67,17 +67,19 @@ OUT OF SCOPE (for MVP)
 
 Flow:
 
-Landing Page → API (Render)
-           → Enrichment (Google + Website + Clay)
-           → Fit Score Calculation
-           → Salesforce Update
-           → (Optional) Stape event decision
+LanderLab Form → Workato (webhook)
+             → Salesforce (create Lead)
+             → TSI API /enrich (Hostinger VPS)
+             → Enrichment (Google + Website + Clay)
+             → Fit Score Calculation
+             → Return to Workato
+             → Workato updates Salesforce Lead
+             → (Optional) Stape event decision
 
-Hosting: Render
+Hosting: Hostinger VPS
 Services:
-	•	Web API
-	•	Background Worker
-	•	Postgres DB
+	•	Web API (port 4900) - synchronous enrichment
+	•	PostgreSQL DB - audit trail
 
 ⸻
 
@@ -152,31 +154,38 @@ Salesforce is the source of truth.
 
 8. API Contracts (MVP)
 
-Input (from Landing Page / Webhook)
+Input (from Workato HTTP action)
+
+POST /enrich
+Headers: X-API-Key: {api_key}
 
 {
-  "lead_id": "uuid",
+  "salesforce_lead_id": "00Qxxxxxxxxxxxx",
   "business_name": "ABC Roofing",
   "phone": "+1...",
-  "email": "hashed",
   "website": "example.com",
-  "utm_source": "facebook",
-  "fbclid": "...",
-  "gclid": "..."
+  "city": "Austin",
+  "state": "TX"
 }
 
-Output (to Salesforce)
+Output (returned to Workato for Salesforce update)
 
 {
-  "lead_id": "SFDC_ID",
+  "enrichment_status": "completed",
   "fit_score": 78,
   "fit_tier": "High Fit",
-  "signals": {
-    "google_reviews": 23,
-    "employees_est": 5,
-    "years_in_business": 4,
-    "pixels_detected": ["meta"]
-  }
+  "employee_estimate": 5,
+  "years_in_business": 4,
+  "google_reviews_count": 23,
+  "google_rating": 4.5,
+  "has_website": true,
+  "has_physical_location": true,
+  "pixels_detected": "meta,ga4",
+  "has_meta_pixel": true,
+  "has_ga4": true,
+  "has_google_ads": false,
+  "has_hubspot": false,
+  "enrichment_timestamp": "2024-01-01T00:00:00.000Z"
 }
 
 

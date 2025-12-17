@@ -26,6 +26,8 @@
       justify-content: space-between;
       align-items: center;
       margin-bottom: 30px;
+      flex-wrap: wrap;
+      gap: 15px;
     }
     h1 {
       font-size: 28px;
@@ -35,8 +37,9 @@
       display: flex;
       gap: 15px;
       align-items: center;
+      flex-wrap: wrap;
     }
-    select, button {
+    select, button, input {
       padding: 10px 16px;
       border: 1px solid #ddd;
       border-radius: 8px;
@@ -52,9 +55,52 @@
     button:hover {
       background: #4338ca;
     }
+    button:disabled {
+      background: #9ca3af;
+      cursor: not-allowed;
+    }
+    button.secondary {
+      background: #6b7280;
+    }
+    button.secondary:hover {
+      background: #4b5563;
+    }
+    button.success {
+      background: #10b981;
+    }
+    button.success:hover {
+      background: #059669;
+    }
     .last-updated {
       color: #666;
       font-size: 13px;
+    }
+    .tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #e5e7eb;
+      padding-bottom: 10px;
+    }
+    .tab {
+      padding: 10px 20px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 16px;
+      color: #6b7280;
+      border-radius: 8px 8px 0 0;
+    }
+    .tab.active {
+      color: #4f46e5;
+      font-weight: 600;
+      background: #eef2ff;
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
     }
     .stats-grid {
       display: grid;
@@ -83,6 +129,7 @@
     .stat-card .value.green { color: #10b981; }
     .stat-card .value.blue { color: #3b82f6; }
     .stat-card .value.purple { color: #8b5cf6; }
+    .stat-card .value.orange { color: #f97316; }
     .charts-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -109,11 +156,15 @@
       padding: 24px;
       border-radius: 12px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
     }
     .table-card h2 {
       font-size: 18px;
       margin-bottom: 20px;
       color: #1a1a2e;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
     table {
       width: 100%;
@@ -159,6 +210,49 @@
       padding: 60px;
       color: #ef4444;
     }
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .badge.disqualified { background: #fee2e2; color: #dc2626; }
+    .badge.mql { background: #fef3c7; color: #d97706; }
+    .badge.high-fit { background: #d1fae5; color: #059669; }
+    .badge.premium { background: #dbeafe; color: #2563eb; }
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+    .selection-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 15px;
+      background: #eef2ff;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .api-key-input {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 20px;
+      padding: 15px;
+      background: #fff7ed;
+      border-radius: 8px;
+      border: 1px solid #fed7aa;
+    }
+    .api-key-input input {
+      flex: 1;
+      max-width: 400px;
+    }
+    .api-key-input label {
+      font-weight: 600;
+      color: #9a3412;
+    }
     @media (max-width: 768px) {
       .charts-row {
         grid-template-columns: 1fr;
@@ -182,35 +276,112 @@
       </div>
     </header>
 
-    <div id="content">
-      <div class="loading">Loading dashboard data...</div>
+    <div class="api-key-input">
+      <label for="apiKey">API Key:</label>
+      <input type="password" id="apiKey" placeholder="Enter your API key" onchange="saveApiKey()">
+      <button class="secondary" onclick="toggleApiKey()">Show</button>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('overview')">Overview</button>
+      <button class="tab" onclick="switchTab('unenriched')">Unenriched Leads</button>
+    </div>
+
+    <div id="overview-tab" class="tab-content active">
+      <div id="overview-content">
+        <div class="loading">Loading dashboard data...</div>
+      </div>
+    </div>
+
+    <div id="unenriched-tab" class="tab-content">
+      <div id="unenriched-content">
+        <div class="loading">Loading unenriched leads...</div>
+      </div>
     </div>
   </div>
 
   <script>
-    let scoreChart, sourceChart;
+    let tierChart, sourceChart;
+    let selectedLeads = new Set();
+
+    // API Key management
+    function getApiKey() {
+      return document.getElementById('apiKey').value || localStorage.getItem('tsi_api_key') || '';
+    }
+
+    function saveApiKey() {
+      const key = document.getElementById('apiKey').value;
+      if (key) {
+        localStorage.setItem('tsi_api_key', key);
+      }
+    }
+
+    function toggleApiKey() {
+      const input = document.getElementById('apiKey');
+      input.type = input.type === 'password' ? 'text' : 'password';
+    }
+
+    // Load saved API key on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      const savedKey = localStorage.getItem('tsi_api_key');
+      if (savedKey) {
+        document.getElementById('apiKey').value = savedKey;
+      }
+    });
+
+    // Tab switching
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+      document.querySelector(`[onclick="switchTab('${tab}')"]`).classList.add('active');
+      document.getElementById(`${tab}-tab`).classList.add('active');
+
+      if (tab === 'unenriched') {
+        loadUnenrichedLeads();
+      }
+    }
+
+    // Fetch with API key
+    async function fetchWithAuth(url, options = {}) {
+      const apiKey = getApiKey();
+      if (!apiKey) {
+        throw new Error('API key is required. Please enter your API key above.');
+      }
+
+      return fetch(url, {
+        ...options,
+        headers: {
+          'X-API-Key': apiKey,
+          'Content-Type': 'application/json',
+          ...(options.headers || {}),
+        },
+      });
+    }
 
     async function loadData() {
       const days = document.getElementById('daysSelect').value;
-      const content = document.getElementById('content');
+      const content = document.getElementById('overview-content');
 
       content.innerHTML = '<div class="loading">Loading dashboard data...</div>';
 
       try {
-        const response = await fetch(`/api/dashboard/stats?days=${days}`);
-        if (!response.ok) throw new Error('Failed to fetch data');
+        const response = await fetchWithAuth(`/api/dashboard/stats?days=${days}`);
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to fetch data');
+        }
 
         const data = await response.json();
         renderDashboard(data);
       } catch (error) {
-        content.innerHTML = `<div class="error">Error loading data: ${error.message}</div>`;
+        content.innerHTML = `<div class="error">Error: ${error.message}</div>`;
       }
     }
 
     function renderDashboard(data) {
-      const content = document.getElementById('content');
+      const content = document.getElementById('overview-content');
 
-      // Update last updated
       document.getElementById('lastUpdated').textContent =
         `Updated: ${new Date(data.lastUpdated).toLocaleString()}`;
 
@@ -221,24 +392,28 @@
             <div class="value">${data.totalLeads.toLocaleString()}</div>
           </div>
           <div class="stat-card">
-            <h3>Enriched Leads</h3>
+            <h3>Enriched</h3>
             <div class="value blue">${data.enrichedLeads.toLocaleString()}</div>
+          </div>
+          <div class="stat-card">
+            <h3>Unenriched</h3>
+            <div class="value orange">${data.unenrichedLeads.toLocaleString()}</div>
           </div>
           <div class="stat-card">
             <h3>Enrichment Rate</h3>
             <div class="value green">${data.enrichmentRate.toFixed(1)}%</div>
           </div>
           <div class="stat-card">
-            <h3>Average Score</h3>
-            <div class="value purple">${data.avgScore.toFixed(2)}</div>
+            <h3>Avg Fit Score</h3>
+            <div class="value purple">${data.avgFitScore.toFixed(1)}</div>
           </div>
         </div>
 
         <div class="charts-row">
           <div class="chart-card">
-            <h2>Score Distribution</h2>
+            <h2>Fit Tier Distribution</h2>
             <div class="chart-container">
-              <canvas id="scoreChart"></canvas>
+              <canvas id="tierChart"></canvas>
             </div>
           </div>
           <div class="chart-card">
@@ -258,8 +433,8 @@
                 <th>Total Leads</th>
                 <th>Enriched</th>
                 <th>Enrichment Rate</th>
-                <th>Avg Score</th>
-                <th>Score Distribution (0-5)</th>
+                <th>Avg Fit Score</th>
+                <th>Tier Distribution</th>
               </tr>
             </thead>
             <tbody>
@@ -274,8 +449,8 @@
                     </div>
                     ${source.enrichmentRate.toFixed(1)}%
                   </td>
-                  <td>${source.avgScore.toFixed(2)}</td>
-                  <td>${source.scoreDistribution.map(s => s.count).join(' / ')}</td>
+                  <td>${source.avgFitScore.toFixed(1)}</td>
+                  <td>${source.tierDistribution.map(t => `${t.tier}: ${t.count}`).join(' | ')}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -283,31 +458,30 @@
         </div>
       `;
 
-      // Render charts
-      renderScoreChart(data.scoreDistribution);
+      renderTierChart(data.tierDistribution);
       renderSourceChart(data.byLeadSource);
     }
 
-    function renderScoreChart(distribution) {
-      const ctx = document.getElementById('scoreChart').getContext('2d');
+    function renderTierChart(distribution) {
+      const ctx = document.getElementById('tierChart').getContext('2d');
 
-      if (scoreChart) scoreChart.destroy();
+      if (tierChart) tierChart.destroy();
 
-      scoreChart = new Chart(ctx, {
+      const colors = {
+        'Disqualified': '#ef4444',
+        'MQL': '#f97316',
+        'High Fit': '#22c55e',
+        'Premium': '#3b82f6',
+      };
+
+      tierChart = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: distribution.map(d => `Score ${d.score}`),
+          labels: distribution.map(d => d.tier),
           datasets: [{
             label: 'Number of Leads',
             data: distribution.map(d => d.count),
-            backgroundColor: [
-              '#ef4444', // 0 - red
-              '#f97316', // 1 - orange
-              '#eab308', // 2 - yellow
-              '#84cc16', // 3 - lime
-              '#22c55e', // 4 - green
-              '#10b981', // 5 - emerald
-            ],
+            backgroundColor: distribution.map(d => colors[d.tier] || '#6b7280'),
             borderRadius: 6,
           }]
         },
@@ -335,7 +509,6 @@
 
       if (sourceChart) sourceChart.destroy();
 
-      // Take top 8 sources
       const topSources = sources.slice(0, 8);
 
       const colors = [
@@ -367,6 +540,202 @@
           }
         }
       });
+    }
+
+    // Unenriched leads tab
+    async function loadUnenrichedLeads() {
+      const content = document.getElementById('unenriched-content');
+      content.innerHTML = '<div class="loading">Loading unenriched leads...</div>';
+      selectedLeads.clear();
+
+      try {
+        const response = await fetchWithAuth('/api/dashboard/unenriched?limit=100');
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to fetch unenriched leads');
+        }
+
+        const data = await response.json();
+        renderUnenrichedLeads(data);
+      } catch (error) {
+        content.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+      }
+    }
+
+    function renderUnenrichedLeads(data) {
+      const content = document.getElementById('unenriched-content');
+
+      content.innerHTML = `
+        <div class="stats-grid">
+          <div class="stat-card">
+            <h3>Total Unenriched Leads</h3>
+            <div class="value orange">${data.totalCount.toLocaleString()}</div>
+          </div>
+          <div class="stat-card">
+            <h3>Showing</h3>
+            <div class="value">${data.leads.length}</div>
+          </div>
+        </div>
+
+        <div class="selection-bar">
+          <div>
+            <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+            <label for="selectAll">Select All</label>
+            <span id="selectedCount" style="margin-left: 15px; color: #6b7280;">0 selected</span>
+          </div>
+          <button class="success" onclick="enrichSelected()" id="enrichBtn" disabled>
+            Enrich Selected Leads
+          </button>
+        </div>
+
+        <div class="table-card">
+          <h2>Unenriched Leads (Most Recent)</h2>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 40px;"></th>
+                <th>Company</th>
+                <th>Website</th>
+                <th>Phone</th>
+                <th>Location</th>
+                <th>Lead Source</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.leads.map(lead => `
+                <tr>
+                  <td>
+                    <input type="checkbox" class="lead-checkbox" data-id="${lead.id}"
+                           onchange="toggleLeadSelection('${lead.id}')">
+                  </td>
+                  <td><strong>${lead.company || '-'}</strong></td>
+                  <td>${lead.website ? `<a href="${lead.website}" target="_blank">${truncate(lead.website, 30)}</a>` : '-'}</td>
+                  <td>${lead.phone || '-'}</td>
+                  <td>${[lead.city, lead.state].filter(Boolean).join(', ') || '-'}</td>
+                  <td>${lead.leadSource || '-'}</td>
+                  <td>${new Date(lead.createdDate).toLocaleDateString()}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <div id="enrichmentResults"></div>
+      `;
+    }
+
+    function truncate(str, len) {
+      if (!str) return '';
+      return str.length > len ? str.substring(0, len) + '...' : str;
+    }
+
+    function toggleLeadSelection(id) {
+      if (selectedLeads.has(id)) {
+        selectedLeads.delete(id);
+      } else {
+        selectedLeads.add(id);
+      }
+      updateSelectionUI();
+    }
+
+    function toggleSelectAll() {
+      const selectAll = document.getElementById('selectAll').checked;
+      const checkboxes = document.querySelectorAll('.lead-checkbox');
+
+      checkboxes.forEach(cb => {
+        cb.checked = selectAll;
+        const id = cb.dataset.id;
+        if (selectAll) {
+          selectedLeads.add(id);
+        } else {
+          selectedLeads.delete(id);
+        }
+      });
+
+      updateSelectionUI();
+    }
+
+    function updateSelectionUI() {
+      document.getElementById('selectedCount').textContent = `${selectedLeads.size} selected`;
+      document.getElementById('enrichBtn').disabled = selectedLeads.size === 0;
+    }
+
+    async function enrichSelected() {
+      if (selectedLeads.size === 0) return;
+      if (selectedLeads.size > 10) {
+        alert('Please select a maximum of 10 leads at a time.');
+        return;
+      }
+
+      const btn = document.getElementById('enrichBtn');
+      btn.disabled = true;
+      btn.textContent = 'Enriching...';
+
+      const resultsDiv = document.getElementById('enrichmentResults');
+      resultsDiv.innerHTML = '<div class="loading">Processing enrichment...</div>';
+
+      try {
+        const response = await fetchWithAuth('/api/dashboard/enrich-batch', {
+          method: 'POST',
+          body: JSON.stringify({ lead_ids: Array.from(selectedLeads) }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Enrichment failed');
+        }
+
+        const data = await response.json();
+
+        resultsDiv.innerHTML = `
+          <div class="table-card">
+            <h2>Enrichment Results</h2>
+            <div class="stats-grid" style="margin-bottom: 20px;">
+              <div class="stat-card">
+                <h3>Processed</h3>
+                <div class="value">${data.processed}</div>
+              </div>
+              <div class="stat-card">
+                <h3>Successful</h3>
+                <div class="value green">${data.successful}</div>
+              </div>
+              <div class="stat-card">
+                <h3>Failed</h3>
+                <div class="value" style="color: #ef4444;">${data.failed}</div>
+              </div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Lead ID</th>
+                  <th>Status</th>
+                  <th>Fit Score</th>
+                  <th>Fit Tier</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${data.results.map(r => `
+                  <tr>
+                    <td>${r.id}</td>
+                    <td>${r.success ? '<span style="color: #10b981;">Success</span>' : `<span style="color: #ef4444;">Failed: ${r.error}</span>`}</td>
+                    <td>${r.fit_score ?? '-'}</td>
+                    <td>${r.fit_tier ? `<span class="badge ${r.fit_tier.toLowerCase().replace(' ', '-')}">${r.fit_tier}</span>` : '-'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+
+        // Refresh the list
+        setTimeout(() => loadUnenrichedLeads(), 2000);
+      } catch (error) {
+        resultsDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Enrich Selected Leads';
+      }
     }
 
     // Load data on page load

@@ -1,34 +1,39 @@
-# TSI Fit Score Engine MVP
+# TSI Fit Score Engine
 
-Automated lead enrichment and scoring system that enriches leads at form submit, calculates a Fit Score (0-100), and writes the score + attributes into Salesforce.
+Automated lead enrichment and scoring system that enriches leads via Workato webhook, calculates a Fit Score (0-100), and returns enrichment data for Salesforce update.
 
 ## Architecture
 
-- **API Service**: Express.js API that receives webhooks from LanderLab.io and queues enrichment jobs
-- **Worker Service**: BullMQ worker that processes enrichment jobs (Google Places, Clay, Website Tech Detection)
-- **PostgreSQL**: Stores lead data and enrichment results
-- **Redis**: Queue backend for BullMQ
-- **Salesforce**: Receives Fit Score and enrichment data updates
+```
+LanderLab Form → Workato → Salesforce (create Lead)
+                    ↓
+              Workato calls POST /enrich
+                    ↓
+              TSI enriches (Google Places, Website Tech, Clay)
+                    ↓
+              Returns fit_score + enrichment data
+                    ↓
+              Workato updates Salesforce Lead
+```
+
+- **API Service**: Express.js API (port 4900) that performs synchronous lead enrichment
+- **PostgreSQL**: Stores enrichment results for audit trail
+- **Workato**: Orchestrates LanderLab → Salesforce flow and triggers enrichment
 
 ## Prerequisites
 
 - Node.js >= 18.0.0
 - PostgreSQL database
-- Redis instance
 - Google Places API key
 - Clay API key
-- Salesforce credentials (Client ID, Client Secret, Username, Password, Security Token)
 
 ## Environment Variables
 
-Create a `.env` file in the root directory with the following variables:
+Create a `.env` file in the root directory:
 
 ```bash
 # Database
 DATABASE_URL=postgresql://user:password@localhost:5432/tsi_fit_score
-
-# Redis
-REDIS_URL=redis://localhost:6379
 
 # Google Places API
 GOOGLE_PLACES_API_KEY=your_google_places_api_key_here
@@ -36,18 +41,13 @@ GOOGLE_PLACES_API_KEY=your_google_places_api_key_here
 # Clay API
 CLAY_API_KEY=your_clay_api_key_here
 
-# Salesforce
-SFDC_LOGIN_URL=https://login.salesforce.com
-SFDC_CLIENT_ID=your_salesforce_client_id
-SFDC_CLIENT_SECRET=your_salesforce_client_secret
-SFDC_USERNAME=your_salesforce_username
-SFDC_PASSWORD=your_salesforce_password
-SFDC_SECURITY_TOKEN=your_salesforce_security_token
+# API Authentication (for Workato webhook calls)
+API_KEY=your_secure_api_key_here
 
 # Application
 NODE_ENV=production
 LOG_LEVEL=info
-PORT=3000
+PORT=4900
 ```
 
 ## Local Development Setup
@@ -58,150 +58,132 @@ PORT=3000
    ```
 
 2. **Set up database**:
-   - Create a PostgreSQL database
-   - Run migrations:
-     ```bash
-     psql -d your_database -f migrations/001_create_leads_table.sql
-     psql -d your_database -f migrations/002_create_enrichments_table.sql
-     ```
-
-3. **Start Redis**:
    ```bash
-   redis-server
+   psql -d your_database -f migrations/001_create_leads_table.sql
+   psql -d your_database -f migrations/002_create_enrichments_table.sql
    ```
 
-4. **Build the project**:
+3. **Build the project**:
    ```bash
    npm run build
    ```
 
-5. **Start services**:
-   - API Service:
-     ```bash
-     cd api && npm run dev
-     ```
-   - Worker Service:
-     ```bash
-     cd worker && npm run dev
-     ```
+4. **Start the server**:
+   ```bash
+   npm run dev
+   ```
 
-## Deployment to Render
+## Deployment to Hostinger
 
 ### Prerequisites
 
-1. Render account
-2. All environment variables configured
-3. Database migrations run
+1. Hostinger VPS account
+2. Node.js 18+ installed on server
+3. PostgreSQL database configured
 
 ### Steps
 
-1. **Connect your repository** to Render
+1. **Set up your VPS**:
+   - Install Node.js and PostgreSQL
+   - Clone the repository
 
-2. **Create services from render.yaml**:
-   - Render will automatically detect `render.yaml` and create:
-     - API Service (Web Service)
-     - Worker Service (Background Worker)
-     - PostgreSQL Database
-     - Redis Key-Value Store
+2. **Configure environment variables**:
+   - Create `.env` file with all required variables
+   - Generate a secure API key for Workato authentication
 
-3. **Configure environment variables**:
-   - In Render dashboard, set all required environment variables for both API and Worker services
-   - Mark sensitive variables (API keys, passwords) as "Sync" = false
+3. **Run database migrations**:
+   ```bash
+   psql $DATABASE_URL -f migrations/001_create_leads_table.sql
+   psql $DATABASE_URL -f migrations/002_create_enrichments_table.sql
+   ```
 
-4. **Run database migrations**:
-   - Connect to your Render PostgreSQL database
-   - Run the migration files:
-     ```bash
-     psql $DATABASE_URL -f migrations/001_create_leads_table.sql
-     psql $DATABASE_URL -f migrations/002_create_enrichments_table.sql
-     ```
+4. **Build and start**:
+   ```bash
+   npm install
+   npm run build
+   node dist/index.js
+   ```
 
-5. **Deploy services**:
-   - Render will automatically build and deploy on git push
-   - Monitor logs in Render dashboard
-
-### LanderLab.io Webhook Configuration
-
-1. In LanderLab.io, navigate to your landing page settings
-2. Set up webhook:
-   - **Webhook URL**: `https://your-api-service.onrender.com/ingest`
-   - **HTTP Method**: POST
-   - **Payload Format**: JSON
-
-The API accepts both direct API format and LanderLab webhook format. See `sample-payload.json` for examples.
+5. **Set up process manager** (recommended):
+   - Use PM2: `pm2 start dist/index.js --name tsi-fit-score`
+   - Configure automatic restarts on failure
 
 ## API Endpoints
 
-### POST /ingest
+### POST /enrich
 
-Webhook endpoint for receiving leads from LanderLab.io or direct API calls.
+Synchronous enrichment endpoint for Workato integration.
 
-**Request Body** (Direct API format):
+**Headers:**
+- `X-API-Key`: Your API key (required)
+- `Content-Type`: application/json
+
+**Request Body:**
 ```json
 {
-  "lead_id": "external_123",
   "salesforce_lead_id": "00Qxxxxxxxxxxxx",
   "business_name": "ABC Roofing",
   "website": "https://abcroofing.com",
   "phone": "+15551234567",
-  "email": "owner@abcroofing.com",
-  "utm_source": "facebook",
-  "fbclid": "xxx",
-  "gclid": "",
-  "ttclid": "",
   "city": "Austin",
   "state": "TX"
 }
 ```
 
-**Response**:
+**Response:**
 ```json
 {
-  "status": "accepted",
-  "job_id": "job-uuid",
-  "lead_row_id": "lead-uuid"
+  "enrichment_status": "completed",
+  "fit_score": 78,
+  "fit_tier": "High Fit",
+  "employee_estimate": 5,
+  "years_in_business": 4,
+  "google_reviews_count": 23,
+  "google_rating": 4.5,
+  "has_website": true,
+  "has_physical_location": true,
+  "pixels_detected": "meta,ga4",
+  "has_meta_pixel": true,
+  "has_ga4": true,
+  "has_google_ads": false,
+  "has_hubspot": false,
+  "score_breakdown": "{...}",
+  "enrichment_timestamp": "2024-01-01T00:00:00.000Z",
+  "request_id": "uuid"
 }
 ```
 
 ### GET /health
 
-Health check endpoint.
+Health check endpoint (no authentication required).
 
-**Response**:
-```json
-{
-  "status": "ok",
-  "timestamp": "2024-01-01T00:00:00.000Z"
-}
-```
+### GET /enrichment/:salesforceLeadId
 
-### GET /lead/:id
+Retrieve enrichment data by Salesforce Lead ID (requires X-API-Key header).
 
-Retrieve lead and enrichment data by lead ID (UUID).
+## Workato Integration
 
-**Response**:
-```json
-{
-  "lead": {
-    "id": "uuid",
-    "lead_id": "external_123",
-    "business_name": "ABC Roofing",
-    ...
-  },
-  "enrichment": {
-    "fit_score": 78,
-    "fit_tier": "High Fit",
-    "google_places_data": {...},
-    "clay_data": {...},
-    "website_tech_data": {...},
-    ...
-  }
-}
-```
+### HTTP Action Configuration
+
+1. **URL**: `https://your-domain.com:4900/enrich`
+2. **Method**: POST
+3. **Headers**:
+   - `X-API-Key`: `your_api_key`
+   - `Content-Type`: `application/json`
+4. **Request Body**: Map Salesforce Lead fields:
+   ```json
+   {
+     "salesforce_lead_id": "{Lead.Id}",
+     "business_name": "{Lead.Company}",
+     "website": "{Lead.Website}",
+     "phone": "{Lead.Phone}",
+     "city": "{Lead.City}",
+     "state": "{Lead.State}"
+   }
+   ```
+5. **Response Handling**: Map response fields to Salesforce Lead update action
 
 ## Fit Score Calculation
-
-The Fit Score (0-100) is calculated based on:
 
 ### Solvency Score (0-80 points)
 - **Website present**: +10 points
@@ -234,66 +216,61 @@ The Fit Score (0-100) is calculated based on:
 - **60-79**: High Fit
 - **80-100**: Premium
 
-## Salesforce Integration
+## Salesforce Fields
 
-The system updates the following custom fields on Lead/Opportunity records:
+Workato should update these custom fields on Lead records:
 
-- `Fit_Score__c` (Number)
-- `Fit_Tier__c` (Picklist)
-- `Employee_Estimate__c` (Number)
-- `Years_In_Business__c` (Number)
-- `Google_Reviews_Count__c` (Number)
-- `Has_Website__c` (Boolean)
-- `Pixels_Detected__c` (Text) - Comma-separated list (e.g., "meta,ga4,tiktok")
-- `Marketing_Tools__c` (Text) - Comma-separated list
-- `Enrichment_Status__c` (Text)
-- `Fit_Score_Timestamp__c` (DateTime)
-- `Score_Breakdown__c` (Text) - JSON string with detailed breakdown
+| Field API Name | Type | Description |
+|---------------|------|-------------|
+| `Fit_Score__c` | Number | Fit score (0-100) |
+| `Fit_Tier__c` | Picklist | Disqualified/MQL/High Fit/Premium |
+| `Employee_Estimate__c` | Number | Estimated employee count |
+| `Years_In_Business__c` | Number | Years in business |
+| `Google_Reviews_Count__c` | Number | Google review count |
+| `Google_Rating__c` | Number | Google rating (1-5) |
+| `Has_Website__c` | Checkbox | Has website |
+| `Has_Physical_Location__c` | Checkbox | Has physical location |
+| `Pixels_Detected__c` | Text | Comma-separated list |
+| `Has_Meta_Pixel__c` | Checkbox | Has Meta pixel |
+| `Has_GA4__c` | Checkbox | Has GA4 |
+| `Has_Google_Ads__c` | Checkbox | Has Google Ads tag |
+| `Has_HubSpot__c` | Checkbox | Has HubSpot |
+| `Enrichment_Status__c` | Text | completed/no_data |
+| `Enrichment_Timestamp__c` | DateTime | When enrichment ran |
 
 ## Testing
 
-Run unit tests:
 ```bash
 npm test
 ```
 
 ## Monitoring
 
-- **API Service**: Monitor via `/health` endpoint
-- **Worker Service**: Check logs in Render dashboard
-- **Queue**: Monitor job status via BullMQ dashboard (if configured)
-- **Database**: Monitor via Render PostgreSQL dashboard
+- **API Health**: `GET /health`
+- **Logs**: Check application logs for enrichment status
+- **Database**: Query `lead_enrichments` table for audit trail
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Database connection errors**:
+1. **401 Unauthorized**:
+   - Verify `X-API-Key` header is set correctly
+   - Check `API_KEY` environment variable
+
+2. **Database connection errors**:
    - Verify `DATABASE_URL` is correct
    - Ensure database is accessible
-   - Check firewall rules
-
-2. **Redis connection errors**:
-   - Verify `REDIS_URL` is correct
-   - Ensure Redis is running
-   - Check network connectivity
 
 3. **Google Places API errors**:
    - Verify API key is valid
    - Check API quota/limits
-   - Review rate limiting (1 req/sec)
 
-4. **Salesforce update failures**:
-   - Verify credentials are correct
-   - Check custom fields exist in Salesforce
-   - Review Salesforce API limits
-
-5. **Website tech detection timeouts**:
+4. **Website tech detection timeouts**:
    - Some websites may be slow to load
-   - Puppeteer timeout is set to 15 seconds
-   - Failed detection doesn't fail the entire job
+   - Puppeteer timeout is 15 seconds
+   - Failed detection doesn't fail the entire request
 
 ## Support
 
-For issues or questions, please refer to the project documentation or contact the development team.
-
+For issues or questions, refer to the project documentation or contact the development team.
