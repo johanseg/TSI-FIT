@@ -74,6 +74,10 @@ export class DashboardStatsService {
     const startDateStr = startDate || defaultStartDate;
     const endDateStr = endDate || defaultEndDate;
 
+    // Format dates for SOQL datetime comparison (needs T00:00:00Z format)
+    const soqlStartDate = `${startDateStr}T00:00:00Z`;
+    const soqlEndDate = `${endDateStr}T23:59:59Z`;
+
     // Try to query with custom Fit Score OUTPUT fields first (Fit_Score__c, Fit_Tier__c)
     // Then fall back to existing INPUT fields (Has_Website__c, Number_of_Employees__c, etc.)
     // Finally fall back to basic Lead fields
@@ -91,7 +95,7 @@ export class DashboardStatsService {
                Google_Reviews_Count__c, Has_Website__c,
                Pixels_Detected__c, Fit_Score_Timestamp__c, CreatedDate
         FROM Lead
-        WHERE CreatedDate >= ${startDateStr} AND CreatedDate <= ${endDateStr}T23:59:59Z
+        WHERE CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
       `;
       const result = await this.salesforce.query(leadsQuery);
       leads = result.records as any[];
@@ -109,7 +113,7 @@ export class DashboardStatsService {
                    Business_License__c, Spending_on_Marketing__c,
                    Full_Time_Part_Time__c, Lead_Vertical__c, CreatedDate
             FROM Lead
-            WHERE CreatedDate >= ${startDateStr} AND CreatedDate <= ${endDateStr}T23:59:59Z
+            WHERE CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
           `;
           const result = await this.salesforce.query(existingFieldsQuery);
           leads = result.records as any[];
@@ -123,7 +127,7 @@ export class DashboardStatsService {
             const basicQuery = `
               SELECT Id, Company, LeadSource, Website, Phone, City, State, CreatedDate
               FROM Lead
-              WHERE CreatedDate >= ${startDateStr} AND CreatedDate <= ${endDateStr}T23:59:59Z
+              WHERE CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
             `;
             const result = await this.salesforce.query(basicQuery);
             leads = result.records as any[];
