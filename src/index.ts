@@ -552,14 +552,20 @@ app.get('/api/dashboard/stats', async (req, res) => {
 app.get('/api/dashboard/unenriched', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 100;
+    const offset = parseInt(req.query.offset as string) || 0;
     const startDate = req.query.startDate as string | undefined;
     const endDate = req.query.endDate as string | undefined;
 
     const salesforce = getSalesforceService();
     const dashboardService = new DashboardStatsService(salesforce);
-    const leads = await dashboardService.getUnenrichedLeads(limit, startDate, endDate);
-    // Return the count of leads returned (filtered by date)
-    res.json({ leads, totalCount: leads.length });
+    const { leads, totalCount } = await dashboardService.getUnenrichedLeadsPaginated(limit, offset, startDate, endDate);
+    res.json({
+      leads,
+      totalCount,
+      limit,
+      offset,
+      hasMore: offset + leads.length < totalCount
+    });
   } catch (error) {
     logger.error('Failed to fetch unenriched leads', { error });
     res.status(500).json({ error: 'Failed to fetch unenriched leads' });

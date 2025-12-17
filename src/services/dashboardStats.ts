@@ -258,7 +258,12 @@ export class DashboardStatsService {
     };
   }
 
-  async getUnenrichedLeads(limit: number = 100, startDate?: string, endDate?: string): Promise<UnenrichedLead[]> {
+  async getUnenrichedLeadsPaginated(
+    limit: number = 100,
+    offset: number = 0,
+    startDate?: string,
+    endDate?: string
+  ): Promise<{ leads: UnenrichedLead[]; totalCount: number }> {
     await this.salesforce.connect();
 
     // Default to this month if no dates provided
@@ -273,9 +278,33 @@ export class DashboardStatsService {
     const soqlStartDate = `${startDateStr}T00:00:00Z`;
     const soqlEndDate = `${endDateStr}T23:59:59Z`;
 
+    // Helper to map lead records
+    const mapLeads = (records: any[]): UnenrichedLead[] => records.map(lead => ({
+      id: lead.Id,
+      company: lead.Company,
+      website: lead.Website || null,
+      phone: lead.Phone || null,
+      city: lead.City || null,
+      state: lead.State || null,
+      leadSource: lead.LeadSource || null,
+      createdDate: lead.CreatedDate,
+    }));
+
     // Try with Score__c first (0-5 score field), then Fit_Score__c, then no custom fields
     try {
       // First try: Score__c (the 0-5 enrichment score field)
+      // Get total count first
+      const countQuery = `
+        SELECT COUNT(Id) cnt
+        FROM Lead
+        WHERE Score__c = null
+          AND Company != null
+          AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
+      `;
+      const countResult = await this.salesforce.query(countQuery);
+      const totalCount = (countResult.records as any[])[0]?.cnt || 0;
+
+      // Get paginated results
       const query = `
         SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
         FROM Lead
@@ -284,25 +313,25 @@ export class DashboardStatsService {
           AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
         ORDER BY CreatedDate DESC
         LIMIT ${limit}
+        OFFSET ${offset}
       `;
       const result = await this.salesforce.query(query);
-      const leads = result.records as any[];
-
-      return leads.map(lead => ({
-        id: lead.Id,
-        company: lead.Company,
-        website: lead.Website || null,
-        phone: lead.Phone || null,
-        city: lead.City || null,
-        state: lead.State || null,
-        leadSource: lead.LeadSource || null,
-        createdDate: lead.CreatedDate,
-      }));
+      return { leads: mapLeads(result.records as any[]), totalCount };
     } catch (error) {
       if (error instanceof Error && error.message.includes('No such column')) {
         try {
           // Second try: Fit_Score__c
-          const fitScoreQuery = `
+          const countQuery = `
+            SELECT COUNT(Id) cnt
+            FROM Lead
+            WHERE Fit_Score__c = null
+              AND Company != null
+              AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
+          `;
+          const countResult = await this.salesforce.query(countQuery);
+          const totalCount = (countResult.records as any[])[0]?.cnt || 0;
+
+          const query = `
             SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
             FROM Lead
             WHERE Fit_Score__c = null
@@ -310,50 +339,45 @@ export class DashboardStatsService {
               AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
             ORDER BY CreatedDate DESC
             LIMIT ${limit}
+            OFFSET ${offset}
           `;
-          const result = await this.salesforce.query(fitScoreQuery);
-          const leads = result.records as any[];
-
-          return leads.map(lead => ({
-            id: lead.Id,
-            company: lead.Company,
-            website: lead.Website || null,
-            phone: lead.Phone || null,
-            city: lead.City || null,
-            state: lead.State || null,
-            leadSource: lead.LeadSource || null,
-            createdDate: lead.CreatedDate,
-          }));
+          const result = await this.salesforce.query(query);
+          return { leads: mapLeads(result.records as any[]), totalCount };
         } catch (innerError) {
           // Third try: No custom fields - return all leads within date range
           if (innerError instanceof Error && innerError.message.includes('No such column')) {
-            const basicQuery = `
+            const countQuery = `
+              SELECT COUNT(Id) cnt
+              FROM Lead
+              WHERE Company != null
+                AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
+            `;
+            const countResult = await this.salesforce.query(countQuery);
+            const totalCount = (countResult.records as any[])[0]?.cnt || 0;
+
+            const query = `
               SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
               FROM Lead
               WHERE Company != null
                 AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
               ORDER BY CreatedDate DESC
               LIMIT ${limit}
+              OFFSET ${offset}
             `;
-            const result = await this.salesforce.query(basicQuery);
-            const leads = result.records as any[];
-
-            return leads.map(lead => ({
-              id: lead.Id,
-              company: lead.Company,
-              website: lead.Website || null,
-              phone: lead.Phone || null,
-              city: lead.City || null,
-              state: lead.State || null,
-              leadSource: lead.LeadSource || null,
-              createdDate: lead.CreatedDate,
-            }));
+            const result = await this.salesforce.query(query);
+            return { leads: mapLeads(result.records as any[]), totalCount };
           }
           throw innerError;
         }
       }
       throw error;
     }
+  }
+
+  // Keep original method for backwards compatibility
+  async getUnenrichedLeads(limit: number = 100, startDate?: string, endDate?: string): Promise<UnenrichedLead[]> {
+    const { leads } = await this.getUnenrichedLeadsPaginated(limit, 0, startDate, endDate);
+    return leads;
   }
 
   async getUnenrichedLeadsCount(): Promise<number> {

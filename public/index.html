@@ -567,7 +567,7 @@
       <div class="header">
         <h2>Unenriched Leads</h2>
         <div class="header-controls">
-          <select id="unenrichedDateRange" onchange="loadUnenrichedLeads()">
+          <select id="unenrichedDateRange" onchange="loadUnenrichedLeads(1)">
             <option value="this_month" selected>This Month</option>
             <option value="last_month">Last Month</option>
             <option value="this_quarter">This Quarter</option>
@@ -576,7 +576,7 @@
             <option value="last_90_days">Last 90 Days</option>
             <option value="this_year">This Year</option>
           </select>
-          <button onclick="loadUnenrichedLeads()">Refresh</button>
+          <button onclick="loadUnenrichedLeads(1)">Refresh</button>
         </div>
       </div>
       <div id="unenriched-content">
@@ -635,6 +635,14 @@
   <script>
     let tierChart, sourceChart, activityChart;
     let selectedLeads = new Set();
+
+    // Pagination state for unenriched leads
+    let unenrichedPagination = {
+      currentPage: 1,
+      pageSize: 100,
+      totalCount: 0,
+      totalPages: 0
+    };
 
     // Load dashboard on page load
     document.addEventListener('DOMContentLoaded', async () => {
@@ -1269,19 +1277,40 @@
     }
 
     // Unenriched Leads
-    async function loadUnenrichedLeads() {
+    async function loadUnenrichedLeads(page = 1) {
       const content = document.getElementById('unenriched-content');
       content.innerHTML = '<div class="loading">Loading unenriched leads</div>';
       selectedLeads.clear();
 
       try {
         const dateRange = getUnenrichedDateRange();
-        const response = await fetchApi(`/api/dashboard/unenriched?limit=100&startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`);
+        const offset = (page - 1) * unenrichedPagination.pageSize;
+        const response = await fetchApi(`/api/dashboard/unenriched?limit=${unenrichedPagination.pageSize}&offset=${offset}&startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`);
         const data = await response.json();
+
+        // Update pagination state
+        unenrichedPagination.currentPage = page;
+        unenrichedPagination.totalCount = data.totalCount;
+        unenrichedPagination.totalPages = Math.ceil(data.totalCount / unenrichedPagination.pageSize);
+
         renderUnenrichedLeads(data, dateRange);
       } catch (error) {
         content.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
       }
+    }
+
+    // Pagination navigation functions
+    function goToUnenrichedPage(page) {
+      if (page < 1 || page > unenrichedPagination.totalPages) return;
+      loadUnenrichedLeads(page);
+    }
+
+    function goToPreviousPage() {
+      goToUnenrichedPage(unenrichedPagination.currentPage - 1);
+    }
+
+    function goToNextPage() {
+      goToUnenrichedPage(unenrichedPagination.currentPage + 1);
     }
 
     function renderUnenrichedLeads(data, dateRange) {
@@ -1290,22 +1319,44 @@
         ? `${new Date(dateRange.startDate).toLocaleDateString()} - ${new Date(dateRange.endDate).toLocaleDateString()}`
         : 'This Month';
 
+      const { currentPage, totalPages, totalCount, pageSize } = unenrichedPagination;
+      const startItem = ((currentPage - 1) * pageSize) + 1;
+      const endItem = Math.min(currentPage * pageSize, totalCount);
+
+      // Generate page numbers for pagination
+      let pageNumbers = [];
+      if (totalPages <= 7) {
+        pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1);
+      } else {
+        if (currentPage <= 4) {
+          pageNumbers = [1, 2, 3, 4, 5, '...', totalPages];
+        } else if (currentPage >= totalPages - 3) {
+          pageNumbers = [1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+        } else {
+          pageNumbers = [1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages];
+        }
+      }
+
       content.innerHTML = `
         <div class="stats-grid">
           <div class="stat-card">
             <h3>Unenriched Leads</h3>
-            <div class="value orange">${data.totalCount.toLocaleString()}</div>
+            <div class="value orange">${totalCount.toLocaleString()}</div>
           </div>
           <div class="stat-card">
             <h3>Date Range</h3>
             <div class="value" style="font-size: 14px;">${dateRangeLabel}</div>
+          </div>
+          <div class="stat-card">
+            <h3>Showing</h3>
+            <div class="value" style="font-size: 14px;">${startItem.toLocaleString()} - ${endItem.toLocaleString()}</div>
           </div>
         </div>
 
         <div class="selection-bar">
           <div>
             <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
-            <label for="selectAll" style="margin-left: 8px;">Select All</label>
+            <label for="selectAll" style="margin-left: 8px;">Select All on Page</label>
             <span id="selectedCount" style="margin-left: 15px; color: #6b7280;">0 selected</span>
           </div>
           <button class="success" onclick="enrichSelected()" id="batchEnrichBtn" disabled>
@@ -1314,7 +1365,7 @@
         </div>
 
         <div class="card">
-          <h3>Unenriched Leads</h3>
+          <h3>Unenriched Leads <span style="font-weight: normal; font-size: 14px; color: #6b7280;">Page ${currentPage} of ${totalPages}</span></h3>
           <table>
             <thead>
               <tr>
@@ -1341,6 +1392,21 @@
               `).join('')}
             </tbody>
           </table>
+
+          ${totalPages > 1 ? `
+          <div class="pagination" style="display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+            <button class="outline" onclick="goToPreviousPage()" ${currentPage === 1 ? 'disabled' : ''} style="padding: 8px 12px;">
+              &laquo; Previous
+            </button>
+            ${pageNumbers.map(p => p === '...'
+              ? '<span style="padding: 8px;">...</span>'
+              : `<button class="${p === currentPage ? '' : 'outline'}" onclick="goToUnenrichedPage(${p})" style="padding: 8px 12px; min-width: 40px;">${p}</button>`
+            ).join('')}
+            <button class="outline" onclick="goToNextPage()" ${currentPage === totalPages ? 'disabled' : ''} style="padding: 8px 12px;">
+              Next &raquo;
+            </button>
+          </div>
+          ` : ''}
         </div>
 
         <div id="batchResults"></div>
