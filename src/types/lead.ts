@@ -76,6 +76,41 @@ export interface FitScoreResult {
   score_breakdown: ScoreBreakdown;
 }
 
+// Salesforce-aligned field outputs (maps to existing SF custom fields on Lead)
+export type EmployeePicklist = '0' | '1 - 2' | '3 - 5' | 'Over 5';
+export type GBPReviewsPicklist = 'Under 15' | 'Over 14';
+export type YearsInBusinessPicklist = 'Under 1 Year' | '1 - 3 Years' | '3 - 5 Years' | '5 - 10+ years';
+export type LocationTypePicklist = 'Home Office' | 'Physical Location (Office)' | 'Retail Location (Store Front)';
+
+export interface SalesforceEnrichmentFields {
+  // Has_Website__c - Boolean: Does the business have a website?
+  has_website: boolean;
+
+  // Number_of_Employees__c - Picklist: Employee count range
+  number_of_employees: EmployeePicklist | null;
+
+  // Number_of_GBP_Reviews__c - Picklist: Google Business Profile review count
+  number_of_gbp_reviews: GBPReviewsPicklist | null;
+
+  // Number_of_Years_in_Business__c - Picklist: How long in business
+  number_of_years_in_business: YearsInBusinessPicklist | null;
+
+  // Has_GMB__c - Boolean: Does customer have Google Business Profile?
+  has_gmb: boolean;
+
+  // GMB_URL__c - URL: Google Business Profile URL
+  gmb_url: string | null;
+
+  // Location_Type__c - Picklist: Type of business location
+  location_type: LocationTypePicklist | null;
+
+  // Business_License__c - Boolean: Has business license (not determinable from enrichment)
+  business_license: boolean | null;
+
+  // Spending_on_Marketing__c - Boolean: domain age > 2 years AND has advertising pixels
+  spending_on_marketing: boolean;
+}
+
 export interface LeadRecord {
   id: string;
   lead_id: string;
@@ -104,6 +139,17 @@ export interface LeadEnrichmentRecord {
   fit_score?: number;
   fit_tier?: string;
   score_breakdown?: ScoreBreakdown;
+  // Salesforce-aligned fields
+  has_website?: boolean;
+  number_of_employees?: EmployeePicklist;
+  number_of_gbp_reviews?: GBPReviewsPicklist;
+  number_of_years_in_business?: YearsInBusinessPicklist;
+  has_gmb?: boolean;
+  gmb_url?: string;
+  location_type?: LocationTypePicklist;
+  business_license?: boolean;
+  spending_on_marketing?: boolean;
+  // Status tracking
   salesforce_updated: boolean;
   salesforce_updated_at?: Date;
   error_message?: string;

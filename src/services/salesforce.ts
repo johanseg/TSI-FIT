@@ -75,47 +75,39 @@ export class SalesforceService {
   async updateLead(
     salesforceLeadId: string,
     enrichmentData: EnrichmentData,
-    fitScore: FitScoreResult
+    fitScore: FitScoreResult,
+    sfAlignedFields?: Record<string, unknown>
   ): Promise<boolean> {
     try {
       await this.connect();
       this.ensureConnected();
 
-      const googlePlaces = enrichmentData.google_places;
-      const clay = enrichmentData.clay;
       const websiteTech = enrichmentData.website_tech;
 
-      const updateData: Record<string, unknown> = {
-        Fit_Score__c: fitScore.fit_score,
-        Fit_Tier__c: fitScore.fit_tier,
-        Fit_Score_Timestamp__c: new Date().toISOString(),
-        Enrichment_Status__c: 'success',
-      };
+      // Build update data - only include fields that exist in Salesforce
+      // The sfAlignedFields contain the properly mapped picklist values for existing SF custom fields
+      const updateData: Record<string, unknown> = {};
 
-      // Add enrichment data fields
-      if (googlePlaces?.gmb_review_count !== undefined) {
-        updateData.Google_Reviews_Count__c = googlePlaces.gmb_review_count;
+      // Add Salesforce-aligned enrichment fields (these fields already exist in SF)
+      if (sfAlignedFields) {
+        // Only include non-null values to avoid overwriting with nulls
+        Object.entries(sfAlignedFields).forEach(([key, value]) => {
+          if (value !== null && value !== undefined) {
+            updateData[key] = value;
+          }
+        });
       }
 
-      if (clay?.employee_estimate !== undefined) {
-        updateData.Employee_Estimate__c = clay.employee_estimate;
-      }
-
-      if (clay?.years_in_business !== undefined) {
-        updateData.Years_In_Business__c = clay.years_in_business;
-      }
-
+      // Add optional pixel/marketing tracking fields if they exist in SF schema
       if (websiteTech) {
-        updateData.Has_Website__c = true;
         updateData.Pixels_Detected__c = this.formatPixelsDetected(websiteTech);
         updateData.Marketing_Tools__c = this.formatMarketingTools(websiteTech);
-      } else {
-        updateData.Has_Website__c = false;
       }
 
-      // Add score breakdown as JSON string
-      if (fitScore.score_breakdown) {
-        updateData.Score_Breakdown__c = JSON.stringify(fitScore.score_breakdown);
+      // Skip update if no fields to update
+      if (Object.keys(updateData).length === 0) {
+        logger.info('No fields to update in Salesforce', { leadId: salesforceLeadId });
+        return true;
       }
 
       await this.connection!.sobject('Lead').update({
@@ -125,8 +117,7 @@ export class SalesforceService {
 
       logger.info('Salesforce Lead updated successfully', {
         leadId: salesforceLeadId,
-        fitScore: fitScore.fit_score,
-        fitTier: fitScore.fit_tier,
+        fieldsUpdated: Object.keys(updateData),
       });
 
       return true;

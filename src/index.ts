@@ -12,9 +12,10 @@ import { WebsiteTechService } from './services/websiteTech';
 import { calculateFitScore } from './services/fitScore';
 import { SalesforceService } from './services/salesforce';
 import { DashboardStatsService } from './services/dashboardStats';
+import { mapToSalesforceFields, formatForSalesforceUpdate } from './services/salesforceFieldMapper';
 
 // Types
-import { EnrichmentData } from './types/lead';
+import { EnrichmentData, SalesforceEnrichmentFields } from './types/lead';
 
 // In-memory log storage (circular buffer) - defined early so logs are captured
 const logBuffer: Array<{ timestamp: string; level: string; message: string; meta?: Record<string, unknown> }> = [];
@@ -420,17 +421,22 @@ app.post('/api/enrich-by-id', async (req, res) => {
       // Calculate Fit Score
       const fitScoreResult = calculateFitScore(enrichmentData);
 
+      // Map to Salesforce-aligned fields
+      const sfFields = mapToSalesforceFields(enrichmentData, lead.Website);
+
       // Update Salesforce if requested
       let salesforceUpdated = false;
       if (update_salesforce) {
         try {
-          salesforceUpdated = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult);
+          // Update with both fit score and SF-aligned fields
+          const sfUpdateFields = formatForSalesforceUpdate(sfFields);
+          salesforceUpdated = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult, sfUpdateFields);
         } catch (sfError) {
           logger.error('Failed to update Salesforce', { requestId, error: sfError });
         }
       }
 
-      // Store enrichment record
+      // Store enrichment record with SF-aligned fields
       const enrichmentStatus = enrichmentData.google_places || enrichmentData.clay || enrichmentData.website_tech
         ? 'completed' : 'no_data';
 
@@ -439,8 +445,11 @@ app.post('/api/enrich-by-id', async (req, res) => {
           `INSERT INTO lead_enrichments (
             lead_id, job_id, enrichment_status,
             google_places_data, clay_data, website_tech_data,
-            fit_score, fit_tier, score_breakdown, salesforce_updated
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            fit_score, fit_tier, score_breakdown, salesforce_updated,
+            has_website, number_of_employees, number_of_gbp_reviews,
+            number_of_years_in_business, has_gmb, gmb_url,
+            location_type, business_license, spending_on_marketing
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
           [
             salesforce_lead_id,
             requestId,
@@ -452,6 +461,15 @@ app.post('/api/enrich-by-id', async (req, res) => {
             fitScoreResult.fit_tier,
             JSON.stringify(fitScoreResult.score_breakdown),
             salesforceUpdated,
+            sfFields.has_website,
+            sfFields.number_of_employees,
+            sfFields.number_of_gbp_reviews,
+            sfFields.number_of_years_in_business,
+            sfFields.has_gmb,
+            sfFields.gmb_url,
+            sfFields.location_type,
+            sfFields.business_license,
+            sfFields.spending_on_marketing,
           ]
         );
       } catch (dbError) {
@@ -774,6 +792,9 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
       // Step 4: Calculate Fit Score
       const fitScoreResult = calculateFitScore(enrichmentData);
 
+      // Step 5: Map to Salesforce-aligned fields
+      const sfFields = mapToSalesforceFields(enrichmentData, payload.website);
+
       // Determine enrichment status
       const hasAnyEnrichment =
         enrichmentData.google_places ||
@@ -782,14 +803,17 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
 
       const enrichmentStatus = hasAnyEnrichment ? 'completed' : 'no_data';
 
-      // Store enrichment record in database
+      // Store enrichment record in database with SF-aligned fields
       try {
         await pool.query(
           `INSERT INTO lead_enrichments (
             lead_id, job_id, enrichment_status,
             google_places_data, clay_data, website_tech_data,
-            fit_score, fit_tier, score_breakdown
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            fit_score, fit_tier, score_breakdown,
+            has_website, number_of_employees, number_of_gbp_reviews,
+            number_of_years_in_business, has_gmb, gmb_url,
+            location_type, business_license, spending_on_marketing
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
           [
             payload.salesforce_lead_id,
             requestId,
@@ -800,6 +824,15 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
             fitScoreResult.fit_score,
             fitScoreResult.fit_tier,
             JSON.stringify(fitScoreResult.score_breakdown),
+            sfFields.has_website,
+            sfFields.number_of_employees,
+            sfFields.number_of_gbp_reviews,
+            sfFields.number_of_years_in_business,
+            sfFields.has_gmb,
+            sfFields.gmb_url,
+            sfFields.location_type,
+            sfFields.business_license,
+            sfFields.spending_on_marketing,
           ]
         );
       } catch (dbError) {
@@ -820,15 +853,16 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
       });
 
       // Build response for Workato to update Salesforce
+      // Includes both raw enrichment data and Salesforce-aligned field values
       const response = {
         enrichment_status: enrichmentStatus,
         fit_score: fitScoreResult.fit_score,
         fit_tier: fitScoreResult.fit_tier,
+        // Raw enrichment data (for reference/debugging)
         employee_estimate: enrichmentData.clay?.employee_estimate ?? null,
         years_in_business: enrichmentData.clay?.years_in_business ?? null,
         google_reviews_count: enrichmentData.google_places?.gmb_review_count ?? null,
         google_rating: enrichmentData.google_places?.gmb_rating ?? null,
-        has_website: !!payload.website,
         has_physical_location: enrichmentData.google_places?.gmb_is_operational ?? false,
         pixels_detected: enrichmentData.website_tech?.marketing_tools_detected?.join(',') ?? '',
         has_meta_pixel: enrichmentData.website_tech?.has_meta_pixel ?? false,
@@ -838,6 +872,19 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
         score_breakdown: JSON.stringify(fitScoreResult.score_breakdown),
         enrichment_timestamp: new Date().toISOString(),
         request_id: requestId,
+        // Salesforce-aligned fields (map directly to SF custom fields)
+        // Workato should use these values to update the Lead record
+        salesforce_fields: {
+          Has_Website__c: sfFields.has_website,
+          Number_of_Employees__c: sfFields.number_of_employees,
+          Number_of_GBP_Reviews__c: sfFields.number_of_gbp_reviews,
+          Number_of_Years_in_Business__c: sfFields.number_of_years_in_business,
+          Has_GMB__c: sfFields.has_gmb,
+          GMB_URL__c: sfFields.gmb_url,
+          Location_Type__c: sfFields.location_type,
+          Business_License__c: sfFields.business_license,
+          Spending_on_Marketing__c: sfFields.spending_on_marketing,
+        },
       };
 
       res.json(response);
