@@ -46,13 +46,42 @@ export class DashboardStatsService {
     this.salesforce = salesforce;
   }
 
+  // Helper to get tier from score (works with Score__c 0-5 range or Fit_Score__c 0-100 range)
+  private getTierFromScore(score: number | null | undefined): string | null {
+    if (score === null || score === undefined) return null;
+
+    // Check if it's a 0-5 scale (Score__c) or 0-100 scale (Fit_Score__c)
+    if (score <= 5) {
+      // 0-5 scale: 0-1 = Disqualified, 1-2 = MQL, 2-3 = High Fit, 3-5 = Premium
+      if (score < 1) return 'Disqualified';
+      if (score < 2) return 'MQL';
+      if (score < 3) return 'High Fit';
+      return 'Premium';
+    } else {
+      // 0-100 scale: 0-39 = Disqualified, 40-59 = MQL, 60-79 = High Fit, 80-100 = Premium
+      if (score < 40) return 'Disqualified';
+      if (score < 60) return 'MQL';
+      if (score < 80) return 'High Fit';
+      return 'Premium';
+    }
+  }
+
   private calculateTierDistribution(leads: any[]): TierDistribution[] {
     const tiers = ['Disqualified', 'MQL', 'High Fit', 'Premium'];
     const distribution: TierDistribution[] = [];
-    const total = leads.filter(l => l.Fit_Tier__c).length;
+
+    // Get tier for each lead - check Fit_Tier__c first, then calculate from score
+    const leadsWithTiers = leads.map(lead => {
+      if (lead.Fit_Tier__c) return lead.Fit_Tier__c;
+      // Calculate tier from score (check Score__c then Fit_Score__c)
+      const score = lead.Score__c ?? lead.Fit_Score__c;
+      return this.getTierFromScore(score);
+    }).filter(tier => tier !== null);
+
+    const total = leadsWithTiers.length;
 
     for (const tier of tiers) {
-      const count = leads.filter(l => l.Fit_Tier__c === tier).length;
+      const count = leadsWithTiers.filter(t => t === tier).length;
       distribution.push({
         tier,
         count,
@@ -229,16 +258,30 @@ export class DashboardStatsService {
     };
   }
 
-  async getUnenrichedLeads(limit: number = 100): Promise<UnenrichedLead[]> {
+  async getUnenrichedLeads(limit: number = 100, startDate?: string, endDate?: string): Promise<UnenrichedLead[]> {
     await this.salesforce.connect();
 
-    // Try with custom field first, fall back to all leads if field doesn't exist
+    // Default to this month if no dates provided
+    const now = new Date();
+    const defaultStartDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    const defaultEndDate = now.toISOString().split('T')[0];
+
+    const startDateStr = startDate || defaultStartDate;
+    const endDateStr = endDate || defaultEndDate;
+
+    // Format dates for SOQL datetime comparison
+    const soqlStartDate = `${startDateStr}T00:00:00Z`;
+    const soqlEndDate = `${endDateStr}T23:59:59Z`;
+
+    // Try with Score__c first (0-5 score field), then Fit_Score__c, then no custom fields
     try {
+      // First try: Score__c (the 0-5 enrichment score field)
       const query = `
         SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
         FROM Lead
-        WHERE Fit_Score__c = null
+        WHERE Score__c = null
           AND Company != null
+          AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
         ORDER BY CreatedDate DESC
         LIMIT ${limit}
       `;
@@ -256,28 +299,58 @@ export class DashboardStatsService {
         createdDate: lead.CreatedDate,
       }));
     } catch (error) {
-      // Custom fields don't exist - return all leads with Company
       if (error instanceof Error && error.message.includes('No such column')) {
-        const basicQuery = `
-          SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
-          FROM Lead
-          WHERE Company != null
-          ORDER BY CreatedDate DESC
-          LIMIT ${limit}
-        `;
-        const result = await this.salesforce.query(basicQuery);
-        const leads = result.records as any[];
+        try {
+          // Second try: Fit_Score__c
+          const fitScoreQuery = `
+            SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
+            FROM Lead
+            WHERE Fit_Score__c = null
+              AND Company != null
+              AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
+            ORDER BY CreatedDate DESC
+            LIMIT ${limit}
+          `;
+          const result = await this.salesforce.query(fitScoreQuery);
+          const leads = result.records as any[];
 
-        return leads.map(lead => ({
-          id: lead.Id,
-          company: lead.Company,
-          website: lead.Website || null,
-          phone: lead.Phone || null,
-          city: lead.City || null,
-          state: lead.State || null,
-          leadSource: lead.LeadSource || null,
-          createdDate: lead.CreatedDate,
-        }));
+          return leads.map(lead => ({
+            id: lead.Id,
+            company: lead.Company,
+            website: lead.Website || null,
+            phone: lead.Phone || null,
+            city: lead.City || null,
+            state: lead.State || null,
+            leadSource: lead.LeadSource || null,
+            createdDate: lead.CreatedDate,
+          }));
+        } catch (innerError) {
+          // Third try: No custom fields - return all leads within date range
+          if (innerError instanceof Error && innerError.message.includes('No such column')) {
+            const basicQuery = `
+              SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
+              FROM Lead
+              WHERE Company != null
+                AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
+              ORDER BY CreatedDate DESC
+              LIMIT ${limit}
+            `;
+            const result = await this.salesforce.query(basicQuery);
+            const leads = result.records as any[];
+
+            return leads.map(lead => ({
+              id: lead.Id,
+              company: lead.Company,
+              website: lead.Website || null,
+              phone: lead.Phone || null,
+              city: lead.City || null,
+              state: lead.State || null,
+              leadSource: lead.LeadSource || null,
+              createdDate: lead.CreatedDate,
+            }));
+          }
+          throw innerError;
+        }
       }
       throw error;
     }

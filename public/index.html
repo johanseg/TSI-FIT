@@ -525,7 +525,7 @@
         <h2>Manual Lead Enrichment</h2>
       </div>
       <div class="card">
-        <h3>Enrich a Salesforce Lead</h3>
+        <h3>Enrich a Single Lead</h3>
         <p style="color: #6b7280; margin-bottom: 20px;">Enter a Salesforce Lead ID to fetch lead data and run enrichment. The system will update the Fit Score in Salesforce automatically.</p>
         <div class="form-group">
           <label for="leadId">Salesforce Lead ID</label>
@@ -542,6 +542,24 @@
         </div>
         <div id="enrichment-result"></div>
       </div>
+
+      <div class="card" style="margin-top: 20px;">
+        <h3>Bulk Enrich Multiple Leads</h3>
+        <p style="color: #6b7280; margin-bottom: 20px;">Paste multiple Salesforce Lead IDs (one per line) to enrich them in bulk. Maximum 10 leads per batch.</p>
+        <div class="form-group">
+          <label for="bulkLeadIds">Salesforce Lead IDs (one per line)</label>
+          <textarea id="bulkLeadIds" rows="6" style="width: 100%; max-width: 500px; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-family: monospace; font-size: 13px;" placeholder="00Q5e000001ABC123&#10;00Q5e000001DEF456&#10;00Q5e000001GHI789"></textarea>
+          <small>Enter up to 10 Lead IDs, one per line</small>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="bulkUpdateSalesforce" checked>
+          <label for="bulkUpdateSalesforce">Update Salesforce with enrichment results</label>
+        </div>
+        <div style="display: flex; gap: 12px;">
+          <button class="success" onclick="enrichBulkLeads()" id="bulkEnrichBtn">Enrich All Leads</button>
+        </div>
+        <div id="bulk-enrichment-result"></div>
+      </div>
     </div>
 
     <!-- Unenriched Leads Tab -->
@@ -549,6 +567,15 @@
       <div class="header">
         <h2>Unenriched Leads</h2>
         <div class="header-controls">
+          <select id="unenrichedDateRange" onchange="loadUnenrichedLeads()">
+            <option value="this_month" selected>This Month</option>
+            <option value="last_month">Last Month</option>
+            <option value="this_quarter">This Quarter</option>
+            <option value="last_7_days">Last 7 Days</option>
+            <option value="last_30_days">Last 30 Days</option>
+            <option value="last_90_days">Last 90 Days</option>
+            <option value="this_year">This Year</option>
+          </select>
           <button onclick="loadUnenrichedLeads()">Refresh</button>
         </div>
       </div>
@@ -1126,6 +1153,121 @@
       }
     }
 
+    // Bulk Enrichment from Manual Enrichment tab
+    async function enrichBulkLeads() {
+      const textarea = document.getElementById('bulkLeadIds');
+      const lines = textarea.value.trim().split('\n').filter(line => line.trim());
+
+      if (lines.length === 0) {
+        alert('Please enter at least one Salesforce Lead ID');
+        return;
+      }
+
+      if (lines.length > 10) {
+        alert('Maximum 10 leads per batch. Please reduce the number of Lead IDs.');
+        return;
+      }
+
+      const leadIds = lines.map(line => line.trim()).filter(id => id.startsWith('00Q'));
+      if (leadIds.length === 0) {
+        alert('No valid Salesforce Lead IDs found. Lead IDs should start with "00Q".');
+        return;
+      }
+
+      const updateSalesforce = document.getElementById('bulkUpdateSalesforce').checked;
+      const btn = document.getElementById('bulkEnrichBtn');
+      const resultDiv = document.getElementById('bulk-enrichment-result');
+
+      btn.disabled = true;
+      btn.textContent = 'Enriching...';
+      resultDiv.innerHTML = '<div class="loading">Processing enrichment (this may take several minutes)</div>';
+
+      try {
+        const response = await fetchApi('/api/dashboard/enrich-batch', {
+          method: 'POST',
+          body: JSON.stringify({ lead_ids: leadIds, update_salesforce: updateSalesforce }),
+        });
+
+        const data = await response.json();
+
+        resultDiv.innerHTML = `
+          <div class="enrichment-result" style="margin-top: 20px;">
+            <h4 style="color: ${data.successful > 0 ? '#10b981' : '#ef4444'};">Bulk Enrichment Complete</h4>
+            <div class="stats-grid" style="margin: 15px 0;">
+              <div class="stat-card"><h3>Processed</h3><div class="value">${data.processed}</div></div>
+              <div class="stat-card"><h3>Successful</h3><div class="value green">${data.successful}</div></div>
+              <div class="stat-card"><h3>Failed</h3><div class="value red">${data.failed}</div></div>
+            </div>
+            <table>
+              <thead><tr><th>Lead ID</th><th>Status</th><th>Fit Score</th><th>Fit Tier</th></tr></thead>
+              <tbody>
+                ${data.results.map(r => `
+                  <tr>
+                    <td><code>${r.id}</code></td>
+                    <td>${r.success ? '<span class="badge success">Success</span>' : `<span class="badge error">Failed</span>`}</td>
+                    <td>${r.fit_score ?? '-'}</td>
+                    <td>${r.fit_tier ? `<span class="badge ${r.fit_tier.toLowerCase().replace(' ', '-')}">${r.fit_tier}</span>` : '-'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (error) {
+        resultDiv.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Enrich All Leads';
+      }
+    }
+
+    // Helper to get date range for unenriched leads
+    function getUnenrichedDateRange() {
+      const selection = document.getElementById('unenrichedDateRange').value;
+      const now = new Date();
+      let startDate, endDate;
+
+      switch (selection) {
+        case 'this_month':
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          endDate = now;
+          break;
+        case 'last_month':
+          startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          endDate = new Date(now.getFullYear(), now.getMonth(), 0);
+          break;
+        case 'this_quarter':
+          const quarter = Math.floor(now.getMonth() / 3);
+          startDate = new Date(now.getFullYear(), quarter * 3, 1);
+          endDate = now;
+          break;
+        case 'last_7_days':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          endDate = now;
+          break;
+        case 'last_30_days':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          endDate = now;
+          break;
+        case 'last_90_days':
+          startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+          endDate = now;
+          break;
+        case 'this_year':
+          startDate = new Date(now.getFullYear(), 0, 1);
+          endDate = now;
+          break;
+        default:
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          endDate = now;
+      }
+
+      return {
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0]
+      };
+    }
+
     // Unenriched Leads
     async function loadUnenrichedLeads() {
       const content = document.getElementById('unenriched-content');
@@ -1133,26 +1275,30 @@
       selectedLeads.clear();
 
       try {
-        const response = await fetchApi('/api/dashboard/unenriched?limit=100');
+        const dateRange = getUnenrichedDateRange();
+        const response = await fetchApi(`/api/dashboard/unenriched?limit=100&startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`);
         const data = await response.json();
-        renderUnenrichedLeads(data);
+        renderUnenrichedLeads(data, dateRange);
       } catch (error) {
         content.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
       }
     }
 
-    function renderUnenrichedLeads(data) {
+    function renderUnenrichedLeads(data, dateRange) {
       const content = document.getElementById('unenriched-content');
+      const dateRangeLabel = dateRange
+        ? `${new Date(dateRange.startDate).toLocaleDateString()} - ${new Date(dateRange.endDate).toLocaleDateString()}`
+        : 'This Month';
 
       content.innerHTML = `
         <div class="stats-grid">
           <div class="stat-card">
-            <h3>Total Unenriched</h3>
+            <h3>Unenriched Leads</h3>
             <div class="value orange">${data.totalCount.toLocaleString()}</div>
           </div>
           <div class="stat-card">
-            <h3>Showing</h3>
-            <div class="value">${data.leads.length}</div>
+            <h3>Date Range</h3>
+            <div class="value" style="font-size: 14px;">${dateRangeLabel}</div>
           </div>
         </div>
 
