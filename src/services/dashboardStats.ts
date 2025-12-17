@@ -74,12 +74,16 @@ export class DashboardStatsService {
     const startDateStr = startDate || defaultStartDate;
     const endDateStr = endDate || defaultEndDate;
 
-    // Try to query with custom Fit Score fields first
+    // Try to query with custom Fit Score OUTPUT fields first (Fit_Score__c, Fit_Tier__c)
+    // Then fall back to existing INPUT fields (Has_Website__c, Number_of_Employees__c, etc.)
+    // Finally fall back to basic Lead fields
     let leads: any[] = [];
     let customFieldsAvailable = true;
+    let fitScoreFieldsAvailable = true;
     const setupRequired: string[] = [];
 
     try {
+      // First try: Query with Fit Score output fields (what we write to SF after enrichment)
       const leadsQuery = `
         SELECT Id, Company, LeadSource, Website, Phone, City, State,
                Fit_Score__c, Fit_Tier__c, Enrichment_Status__c,
@@ -92,19 +96,41 @@ export class DashboardStatsService {
       const result = await this.salesforce.query(leadsQuery);
       leads = result.records as any[];
     } catch (error) {
-      // Custom fields don't exist yet - fall back to basic query
       if (error instanceof Error && error.message.includes('No such column')) {
-        customFieldsAvailable = false;
-        setupRequired.push('Salesforce custom fields need to be created (Fit_Score__c, Fit_Tier__c, etc.)');
+        fitScoreFieldsAvailable = false;
 
-        // Query with only standard Lead fields
-        const basicQuery = `
-          SELECT Id, Company, LeadSource, Website, Phone, City, State, CreatedDate
-          FROM Lead
-          WHERE CreatedDate >= ${startDateStr} AND CreatedDate <= ${endDateStr}T23:59:59Z
-        `;
-        const result = await this.salesforce.query(basicQuery);
-        leads = result.records as any[];
+        try {
+          // Second try: Query with existing Salesforce INPUT fields (from SALESFORCE_SCHEMA.md)
+          const existingFieldsQuery = `
+            SELECT Id, Company, LeadSource, Website, Phone, City, State,
+                   Has_Website__c, Has_GMB__c, GMB_URL__c,
+                   Number_of_Employees__c, Number_of_GBP_Reviews__c,
+                   Number_of_Years_in_Business__c, Location_Type__c,
+                   Business_License__c, Spending_on_Marketing__c,
+                   Full_Time_Part_Time__c, Lead_Vertical__c, CreatedDate
+            FROM Lead
+            WHERE CreatedDate >= ${startDateStr} AND CreatedDate <= ${endDateStr}T23:59:59Z
+          `;
+          const result = await this.salesforce.query(existingFieldsQuery);
+          leads = result.records as any[];
+          setupRequired.push('Fit Score output fields need to be created (Fit_Score__c, Fit_Tier__c, etc.) - using existing input fields');
+        } catch (innerError) {
+          // Third try: Basic Lead fields only
+          if (innerError instanceof Error && innerError.message.includes('No such column')) {
+            customFieldsAvailable = false;
+            setupRequired.push('No custom fields found - showing basic lead stats only');
+
+            const basicQuery = `
+              SELECT Id, Company, LeadSource, Website, Phone, City, State, CreatedDate
+              FROM Lead
+              WHERE CreatedDate >= ${startDateStr} AND CreatedDate <= ${endDateStr}T23:59:59Z
+            `;
+            const result = await this.salesforce.query(basicQuery);
+            leads = result.records as any[];
+          } else {
+            throw innerError;
+          }
+        }
       } else {
         throw error;
       }
