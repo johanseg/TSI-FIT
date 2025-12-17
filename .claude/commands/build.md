@@ -1,3 +1,9 @@
-Build all packages in the monorepo
+# Build Project
 
-Run `npm run build` to compile TypeScript for api, worker, and shared packages.
+Build the TypeScript project and check for compilation errors.
+
+```bash
+npm run build
+```
+
+If there are type errors, fix them.
