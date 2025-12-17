@@ -267,10 +267,24 @@ app.get('/api/setup/database-stats', async (_req, res) => {
       stats: enrichmentStats.rows[0],
       tierDistribution: tierDistribution.rows,
       recentActivity: recentActivity.rows,
+      tableExists: true,
     });
   } catch (error) {
-    logger.error('Failed to fetch database stats', { error });
-    res.status(500).json({ error: 'Failed to fetch database stats' });
+    // Check if error is due to missing table
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    if (errorMessage.includes('does not exist') || errorMessage.includes('42P01')) {
+      logger.warn('Database table lead_enrichments does not exist - migrations needed');
+      res.json({
+        stats: { total_enrichments: 0, completed: 0, failed: 0, pending: 0 },
+        tierDistribution: [],
+        recentActivity: [],
+        tableExists: false,
+        setupRequired: 'Run database migrations: psql -d $DATABASE_URL -f migrations/001_create_leads_table.sql && psql -d $DATABASE_URL -f migrations/002_create_enrichments_table.sql',
+      });
+    } else {
+      logger.error('Failed to fetch database stats', { error });
+      res.status(500).json({ error: 'Failed to fetch database stats' });
+    }
   }
 });
 

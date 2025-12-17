@@ -24,6 +24,8 @@ export interface DashboardStats {
   tierDistribution: TierDistribution[];
   byLeadSource: LeadSourceStats[];
   lastUpdated: string;
+  customFieldsAvailable: boolean;
+  setupRequired?: string[];
 }
 
 export interface UnenrichedLead {
@@ -72,19 +74,41 @@ export class DashboardStatsService {
     const startDateStr = startDate || defaultStartDate;
     const endDateStr = endDate || defaultEndDate;
 
-    // Query leads with Fit Score fields
-    const leadsQuery = `
-      SELECT Id, Company, LeadSource, Website, Phone, City, State,
-             Fit_Score__c, Fit_Tier__c, Enrichment_Status__c,
-             Employee_Estimate__c, Years_In_Business__c,
-             Google_Reviews_Count__c, Has_Website__c,
-             Pixels_Detected__c, Fit_Score_Timestamp__c, CreatedDate
-      FROM Lead
-      WHERE CreatedDate >= ${startDateStr} AND CreatedDate <= ${endDateStr}T23:59:59Z
-    `;
+    // Try to query with custom Fit Score fields first
+    let leads: any[] = [];
+    let customFieldsAvailable = true;
+    const setupRequired: string[] = [];
 
-    const result = await this.salesforce.query(leadsQuery);
-    const leads = result.records as any[];
+    try {
+      const leadsQuery = `
+        SELECT Id, Company, LeadSource, Website, Phone, City, State,
+               Fit_Score__c, Fit_Tier__c, Enrichment_Status__c,
+               Employee_Estimate__c, Years_In_Business__c,
+               Google_Reviews_Count__c, Has_Website__c,
+               Pixels_Detected__c, Fit_Score_Timestamp__c, CreatedDate
+        FROM Lead
+        WHERE CreatedDate >= ${startDateStr} AND CreatedDate <= ${endDateStr}T23:59:59Z
+      `;
+      const result = await this.salesforce.query(leadsQuery);
+      leads = result.records as any[];
+    } catch (error) {
+      // Custom fields don't exist yet - fall back to basic query
+      if (error instanceof Error && error.message.includes('No such column')) {
+        customFieldsAvailable = false;
+        setupRequired.push('Salesforce custom fields need to be created (Fit_Score__c, Fit_Tier__c, etc.)');
+
+        // Query with only standard Lead fields
+        const basicQuery = `
+          SELECT Id, Company, LeadSource, Website, Phone, City, State, CreatedDate
+          FROM Lead
+          WHERE CreatedDate >= ${startDateStr} AND CreatedDate <= ${endDateStr}T23:59:59Z
+        `;
+        const result = await this.salesforce.query(basicQuery);
+        leads = result.records as any[];
+      } else {
+        throw error;
+      }
+    }
 
     // Calculate overall stats
     const totalLeads = leads.length;
@@ -144,49 +168,91 @@ export class DashboardStatsService {
       tierDistribution,
       byLeadSource,
       lastUpdated: new Date().toISOString(),
+      customFieldsAvailable,
+      setupRequired: setupRequired.length > 0 ? setupRequired : undefined,
     };
   }
 
   async getUnenrichedLeads(limit: number = 100): Promise<UnenrichedLead[]> {
     await this.salesforce.connect();
 
-    // Query leads without Fit Score
-    const query = `
-      SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
-      FROM Lead
-      WHERE Fit_Score__c = null
-        AND Company != null
-      ORDER BY CreatedDate DESC
-      LIMIT ${limit}
-    `;
+    // Try with custom field first, fall back to all leads if field doesn't exist
+    try {
+      const query = `
+        SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
+        FROM Lead
+        WHERE Fit_Score__c = null
+          AND Company != null
+        ORDER BY CreatedDate DESC
+        LIMIT ${limit}
+      `;
+      const result = await this.salesforce.query(query);
+      const leads = result.records as any[];
 
-    const result = await this.salesforce.query(query);
-    const leads = result.records as any[];
+      return leads.map(lead => ({
+        id: lead.Id,
+        company: lead.Company,
+        website: lead.Website || null,
+        phone: lead.Phone || null,
+        city: lead.City || null,
+        state: lead.State || null,
+        leadSource: lead.LeadSource || null,
+        createdDate: lead.CreatedDate,
+      }));
+    } catch (error) {
+      // Custom fields don't exist - return all leads with Company
+      if (error instanceof Error && error.message.includes('No such column')) {
+        const basicQuery = `
+          SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
+          FROM Lead
+          WHERE Company != null
+          ORDER BY CreatedDate DESC
+          LIMIT ${limit}
+        `;
+        const result = await this.salesforce.query(basicQuery);
+        const leads = result.records as any[];
 
-    return leads.map(lead => ({
-      id: lead.Id,
-      company: lead.Company,
-      website: lead.Website || null,
-      phone: lead.Phone || null,
-      city: lead.City || null,
-      state: lead.State || null,
-      leadSource: lead.LeadSource || null,
-      createdDate: lead.CreatedDate,
-    }));
+        return leads.map(lead => ({
+          id: lead.Id,
+          company: lead.Company,
+          website: lead.Website || null,
+          phone: lead.Phone || null,
+          city: lead.City || null,
+          state: lead.State || null,
+          leadSource: lead.LeadSource || null,
+          createdDate: lead.CreatedDate,
+        }));
+      }
+      throw error;
+    }
   }
 
   async getUnenrichedLeadsCount(): Promise<number> {
     await this.salesforce.connect();
 
-    const query = `
-      SELECT COUNT(Id) cnt
-      FROM Lead
-      WHERE Fit_Score__c = null
-        AND Company != null
-    `;
-
-    const result = await this.salesforce.query(query);
-    const records = result.records as any[];
-    return records[0]?.cnt || 0;
+    try {
+      const query = `
+        SELECT COUNT(Id) cnt
+        FROM Lead
+        WHERE Fit_Score__c = null
+          AND Company != null
+      `;
+      const result = await this.salesforce.query(query);
+      const records = result.records as any[];
+      return records[0]?.cnt || 0;
+    } catch (error) {
+      // Custom fields don't exist - return count of all leads with Company
+      if (error instanceof Error && error.message.includes('No such column')) {
+        const basicQuery = `
+          SELECT COUNT(Id) cnt
+          FROM Lead
+          WHERE Company != null
+        `;
+        const result = await this.salesforce.query(basicQuery);
+        const records = result.records as any[];
+        return records[0]?.cnt || 0;
+      }
+      throw error;
+    }
   }
 }

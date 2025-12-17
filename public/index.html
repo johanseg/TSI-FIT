@@ -744,7 +744,39 @@
       const content = document.getElementById('dashboard-content');
       const dateRangeLabel = `${new Date(dateRange.startDate).toLocaleDateString()} - ${new Date(dateRange.endDate).toLocaleDateString()}`;
 
+      // Build setup warnings if needed
+      let setupWarnings = '';
+      const warnings = [];
+
+      if (stats.setupRequired && stats.setupRequired.length > 0) {
+        warnings.push(...stats.setupRequired);
+      }
+      if (dbStats && dbStats.setupRequired) {
+        warnings.push(dbStats.setupRequired);
+      }
+      if (!stats.customFieldsAvailable) {
+        warnings.push('Salesforce custom fields not detected - showing basic lead stats only');
+      }
+      if (dbStats && dbStats.tableExists === false) {
+        warnings.push('Database tables not created - local enrichment storage unavailable');
+      }
+
+      if (warnings.length > 0) {
+        setupWarnings = `
+          <div class="setup-warning" style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
+            <strong style="color: #92400e;">Setup Required:</strong>
+            <ul style="margin: 10px 0 0 20px; color: #92400e;">
+              ${warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}
+            </ul>
+            <p style="margin-top: 10px; color: #92400e; font-size: 13px;">
+              See the <a href="#" onclick="switchTab('setup'); return false;" style="color: #b45309; text-decoration: underline;">Setup & Logs</a> tab for more details.
+            </p>
+          </div>
+        `;
+      }
+
       content.innerHTML = `
+        ${setupWarnings}
         <div class="stats-grid">
           <div class="stat-card">
             <h3>Total Leads</h3>
