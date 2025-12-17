@@ -89,6 +89,41 @@ const authenticateApiKey = (req: express.Request, res: express.Response, next: e
 // Serve static files for dashboard
 app.use('/dashboard', express.static(path.join(__dirname, '../public')));
 
+// Redirect root to dashboard
+app.get('/', (_req, res) => {
+  res.redirect('/dashboard');
+});
+
+// In-memory log storage (circular buffer)
+const logBuffer: Array<{ timestamp: string; level: string; message: string; meta?: Record<string, unknown> }> = [];
+const MAX_LOG_ENTRIES = 500;
+
+// Add a custom format to capture logs
+const captureFormat = winston.format((info) => {
+  const { level, message, timestamp, ...meta } = info;
+  const logEntry = {
+    timestamp: (timestamp as string) || new Date().toISOString(),
+    level: level as string,
+    message: message as string,
+    meta: Object.keys(meta).length > 0 ? meta : undefined,
+  };
+  logBuffer.push(logEntry);
+  if (logBuffer.length > MAX_LOG_ENTRIES) {
+    logBuffer.shift();
+  }
+  return info;
+});
+
+// Replace logger transport with capture format
+logger.clear();
+logger.add(new winston.transports.Console({
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    captureFormat(),
+    winston.format.json()
+  ),
+}));
+
 // Helper to get Salesforce service
 const getSalesforceService = () => new SalesforceService({
   loginUrl: process.env.SFDC_LOGIN_URL || 'https://login.salesforce.com',
@@ -102,6 +137,371 @@ const getSalesforceService = () => new SalesforceService({
 // Health check (no auth required)
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ============ Setup API Endpoints ============
+
+// Get system status and configuration
+app.get('/api/setup/status', authenticateApiKey, async (_req, res) => {
+  try {
+    // Check database connection
+    let dbStatus = { connected: false, error: '' };
+    try {
+      const result = await pool.query('SELECT NOW() as time, current_database() as db');
+      dbStatus = { connected: true, error: '', ...result.rows[0] };
+    } catch (dbErr) {
+      dbStatus = { connected: false, error: dbErr instanceof Error ? dbErr.message : 'Unknown error' };
+    }
+
+    // Check Salesforce connection
+    let sfStatus = { connected: false, error: '' };
+    try {
+      const salesforce = getSalesforceService();
+      await salesforce.connect();
+      sfStatus = { connected: true, error: '' };
+      await salesforce.disconnect();
+    } catch (sfErr) {
+      sfStatus = { connected: false, error: sfErr instanceof Error ? sfErr.message : 'Unknown error' };
+    }
+
+    // Check configured services
+    const services = {
+      database: dbStatus,
+      salesforce: sfStatus,
+      googlePlaces: { configured: !!process.env.GOOGLE_PLACES_API_KEY },
+      clay: { configured: !!process.env.CLAY_API_KEY },
+    };
+
+    // Environment info (masked)
+    const envConfig = {
+      DATABASE_URL: process.env.DATABASE_URL ? '***configured***' : 'NOT SET',
+      GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY ? '***configured***' : 'NOT SET',
+      CLAY_API_KEY: process.env.CLAY_API_KEY ? '***configured***' : 'NOT SET',
+      API_KEY: process.env.API_KEY ? '***configured***' : 'NOT SET',
+      SFDC_LOGIN_URL: process.env.SFDC_LOGIN_URL || 'https://login.salesforce.com',
+      SFDC_USERNAME: process.env.SFDC_USERNAME ? '***configured***' : 'NOT SET',
+      SFDC_PASSWORD: process.env.SFDC_PASSWORD ? '***configured***' : 'NOT SET',
+      SFDC_SECURITY_TOKEN: process.env.SFDC_SECURITY_TOKEN ? '***configured***' : 'NOT SET',
+      NODE_ENV: process.env.NODE_ENV || 'development',
+      PORT: process.env.PORT || '4900',
+      LOG_LEVEL: process.env.LOG_LEVEL || 'info',
+    };
+
+    res.json({
+      services,
+      environment: envConfig,
+      serverTime: new Date().toISOString(),
+      uptime: process.uptime(),
+    });
+  } catch (error) {
+    logger.error('Failed to fetch system status', { error });
+    res.status(500).json({ error: 'Failed to fetch system status' });
+  }
+});
+
+// Get recent logs
+app.get('/api/setup/logs', authenticateApiKey, (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit as string) || 100, MAX_LOG_ENTRIES);
+  const level = req.query.level as string;
+
+  let logs = [...logBuffer].reverse();
+
+  if (level) {
+    logs = logs.filter(log => log.level === level);
+  }
+
+  res.json({
+    logs: logs.slice(0, limit),
+    total: logBuffer.length,
+  });
+});
+
+// Test database connection
+app.post('/api/setup/test-database', authenticateApiKey, async (_req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        current_database() as database_name,
+        pg_size_pretty(pg_database_size(current_database())) as database_size,
+        (SELECT COUNT(*) FROM lead_enrichments) as enrichment_count
+    `);
+    res.json({ success: true, ...result.rows[0] });
+  } catch (error) {
+    res.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Get database stats
+app.get('/api/setup/database-stats', authenticateApiKey, async (_req, res) => {
+  try {
+    const enrichmentStats = await pool.query(`
+      SELECT
+        COUNT(*) as total_enrichments,
+        COUNT(CASE WHEN enrichment_status = 'completed' THEN 1 END) as completed,
+        COUNT(CASE WHEN enrichment_status = 'failed' THEN 1 END) as failed,
+        COUNT(CASE WHEN enrichment_status = 'pending' THEN 1 END) as pending,
+        ROUND(AVG(fit_score), 1) as avg_fit_score,
+        MIN(created_at) as oldest_record,
+        MAX(created_at) as newest_record
+      FROM lead_enrichments
+    `);
+
+    const tierDistribution = await pool.query(`
+      SELECT fit_tier, COUNT(*) as count
+      FROM lead_enrichments
+      WHERE fit_tier IS NOT NULL
+      GROUP BY fit_tier
+      ORDER BY
+        CASE fit_tier
+          WHEN 'Premium' THEN 1
+          WHEN 'High Fit' THEN 2
+          WHEN 'MQL' THEN 3
+          WHEN 'Disqualified' THEN 4
+        END
+    `);
+
+    const recentActivity = await pool.query(`
+      SELECT DATE(created_at) as date, COUNT(*) as count
+      FROM lead_enrichments
+      WHERE created_at > NOW() - INTERVAL '30 days'
+      GROUP BY DATE(created_at)
+      ORDER BY date DESC
+      LIMIT 30
+    `);
+
+    res.json({
+      stats: enrichmentStats.rows[0],
+      tierDistribution: tierDistribution.rows,
+      recentActivity: recentActivity.rows,
+    });
+  } catch (error) {
+    logger.error('Failed to fetch database stats', { error });
+    res.status(500).json({ error: 'Failed to fetch database stats' });
+  }
+});
+
+// ============ Manual Enrichment API Endpoints ============
+
+// Lookup lead by Salesforce ID
+app.get('/api/lead/:salesforceLeadId', authenticateApiKey, async (req, res) => {
+  try {
+    const { salesforceLeadId } = req.params;
+
+    // First check local database for existing enrichment
+    const localResult = await pool.query(
+      `SELECT * FROM lead_enrichments WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [salesforceLeadId]
+    );
+
+    // Then fetch from Salesforce
+    let salesforceLead = null;
+    try {
+      const salesforce = getSalesforceService();
+      const query = `
+        SELECT Id, Company, Website, Phone, City, State, LeadSource,
+               FirstName, LastName, Email, Status, CreatedDate,
+               Fit_Score__c, Fit_Tier__c, Enrichment_Status__c,
+               Employee_Estimate__c, Years_In_Business__c, Google_Reviews_Count__c
+        FROM Lead
+        WHERE Id = '${salesforceLeadId}'
+      `;
+      const result = await salesforce.query(query);
+      if (result.records.length > 0) {
+        salesforceLead = result.records[0];
+      }
+    } catch (sfError) {
+      logger.warn('Failed to fetch lead from Salesforce', { salesforceLeadId, error: sfError });
+    }
+
+    res.json({
+      salesforce: salesforceLead,
+      localEnrichment: localResult.rows[0] || null,
+    });
+  } catch (error) {
+    logger.error('Failed to lookup lead', { error });
+    res.status(500).json({ error: 'Failed to lookup lead' });
+  }
+});
+
+// Manual enrichment by Salesforce Lead ID (fetches data from Salesforce first)
+app.post('/api/enrich-by-id', authenticateApiKey, async (req, res) => {
+  const { salesforce_lead_id, update_salesforce = true } = req.body;
+
+  if (!salesforce_lead_id) {
+    return res.status(400).json({ error: 'salesforce_lead_id is required' });
+  }
+
+  const requestId = uuidv4();
+  const startTime = Date.now();
+
+  logger.info('Manual enrichment started', { requestId, salesforceLeadId: salesforce_lead_id });
+
+  try {
+    // Fetch lead data from Salesforce
+    const salesforce = getSalesforceService();
+    const query = `
+      SELECT Id, Company, Website, Phone, City, State, LeadSource, FirstName, LastName, Email
+      FROM Lead
+      WHERE Id = '${salesforce_lead_id}'
+    `;
+    const result = await salesforce.query(query);
+
+    if (result.records.length === 0) {
+      return res.status(404).json({ error: 'Lead not found in Salesforce' });
+    }
+
+    const lead = result.records[0] as {
+      Id: string; Company: string; Website?: string; Phone?: string;
+      City?: string; State?: string; LeadSource?: string;
+      FirstName?: string; LastName?: string; Email?: string;
+    };
+
+    const enrichmentData: EnrichmentData = {};
+
+    // Initialize services
+    const googlePlaces = new GooglePlacesService(process.env.GOOGLE_PLACES_API_KEY || '');
+    const clay = new ClayService(process.env.CLAY_API_KEY || '');
+    const websiteTech = new WebsiteTechService();
+
+    try {
+      // Google Places enrichment
+      try {
+        logger.info('Enriching with Google Places', { requestId, businessName: lead.Company });
+        const googlePlacesData = await googlePlaces.enrich(
+          lead.Company,
+          lead.Phone,
+          lead.City,
+          lead.State
+        );
+        if (googlePlacesData) {
+          enrichmentData.google_places = googlePlacesData;
+        }
+      } catch (error) {
+        logger.warn('Google Places enrichment failed', { requestId, error });
+      }
+
+      // Website tech detection
+      if (lead.Website) {
+        try {
+          logger.info('Detecting website tech', { requestId, website: lead.Website });
+          const websiteTechData = await websiteTech.detectTech(lead.Website);
+          enrichmentData.website_tech = websiteTechData;
+        } catch (error) {
+          logger.warn('Website tech detection failed', { requestId, error });
+        }
+      }
+
+      // Clay enrichment
+      try {
+        logger.info('Enriching with Clay', { requestId });
+        const clayData = await clay.enrichLead({
+          lead_id: requestId,
+          business_name: lead.Company,
+          website: lead.Website,
+          phone: lead.Phone,
+          city: lead.City,
+          state: lead.State,
+        });
+        if (clayData) {
+          enrichmentData.clay = clayData;
+        }
+      } catch (error) {
+        logger.warn('Clay enrichment failed', { requestId, error });
+      }
+
+      // Calculate Fit Score
+      const fitScoreResult = calculateFitScore(enrichmentData);
+
+      // Update Salesforce if requested
+      let salesforceUpdated = false;
+      if (update_salesforce) {
+        try {
+          salesforceUpdated = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult);
+        } catch (sfError) {
+          logger.error('Failed to update Salesforce', { requestId, error: sfError });
+        }
+      }
+
+      // Store enrichment record
+      const enrichmentStatus = enrichmentData.google_places || enrichmentData.clay || enrichmentData.website_tech
+        ? 'completed' : 'no_data';
+
+      try {
+        await pool.query(
+          `INSERT INTO lead_enrichments (
+            lead_id, job_id, enrichment_status,
+            google_places_data, clay_data, website_tech_data,
+            fit_score, fit_tier, score_breakdown, salesforce_updated
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [
+            salesforce_lead_id,
+            requestId,
+            enrichmentStatus,
+            enrichmentData.google_places ? JSON.stringify(enrichmentData.google_places) : null,
+            enrichmentData.clay ? JSON.stringify(enrichmentData.clay) : null,
+            enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
+            fitScoreResult.fit_score,
+            fitScoreResult.fit_tier,
+            JSON.stringify(fitScoreResult.score_breakdown),
+            salesforceUpdated,
+          ]
+        );
+      } catch (dbError) {
+        logger.error('Failed to store enrichment record', { requestId, error: dbError });
+      }
+
+      const duration = Date.now() - startTime;
+      logger.info('Manual enrichment completed', {
+        requestId,
+        salesforceLeadId: salesforce_lead_id,
+        fitScore: fitScoreResult.fit_score,
+        fitTier: fitScoreResult.fit_tier,
+        duration,
+      });
+
+      res.json({
+        success: true,
+        request_id: requestId,
+        lead: {
+          id: lead.Id,
+          company: lead.Company,
+          website: lead.Website,
+          phone: lead.Phone,
+          city: lead.City,
+          state: lead.State,
+        },
+        enrichment: {
+          status: enrichmentStatus,
+          fit_score: fitScoreResult.fit_score,
+          fit_tier: fitScoreResult.fit_tier,
+          score_breakdown: fitScoreResult.score_breakdown,
+          google_places: enrichmentData.google_places || null,
+          website_tech: enrichmentData.website_tech || null,
+          clay: enrichmentData.clay || null,
+        },
+        salesforce_updated: salesforceUpdated,
+        duration_ms: duration,
+      });
+    } finally {
+      await websiteTech.close();
+    }
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    logger.error('Manual enrichment failed', {
+      requestId,
+      error: error instanceof Error ? error.message : String(error),
+      duration,
+    });
+
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      request_id: requestId,
+    });
+  }
 });
 
 // ============ Dashboard API Endpoints ============

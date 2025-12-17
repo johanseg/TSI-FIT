@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TSI Fit Score Dashboard</title>
+  <title>TSI Fit Score Engine</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     * {
@@ -15,13 +15,62 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
       background: #f5f7fa;
       color: #333;
-      padding: 20px;
+      min-height: 100vh;
     }
-    .container {
-      max-width: 1400px;
-      margin: 0 auto;
+    .sidebar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 240px;
+      background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+      padding: 20px 0;
+      color: white;
+      z-index: 100;
     }
-    header {
+    .logo {
+      padding: 0 20px 30px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      margin-bottom: 20px;
+    }
+    .logo h1 {
+      font-size: 20px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .logo span {
+      font-size: 12px;
+      color: #8b8fa3;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      padding: 14px 20px;
+      color: #8b8fa3;
+      cursor: pointer;
+      transition: all 0.2s;
+      border-left: 3px solid transparent;
+    }
+    .nav-item:hover {
+      background: rgba(255,255,255,0.05);
+      color: #fff;
+    }
+    .nav-item.active {
+      background: rgba(79, 70, 229, 0.2);
+      color: #fff;
+      border-left-color: #4f46e5;
+    }
+    .nav-item svg {
+      width: 20px;
+      height: 20px;
+      margin-right: 12px;
+    }
+    .main-content {
+      margin-left: 240px;
+      padding: 30px;
+      min-height: 100vh;
+    }
+    .header {
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -29,17 +78,17 @@
       flex-wrap: wrap;
       gap: 15px;
     }
-    h1 {
-      font-size: 28px;
+    .header h2 {
+      font-size: 24px;
       color: #1a1a2e;
     }
-    .controls {
+    .header-controls {
       display: flex;
-      gap: 15px;
+      gap: 12px;
       align-items: center;
       flex-wrap: wrap;
     }
-    select, button, input {
+    select, button, input[type="text"], input[type="password"] {
       padding: 10px 16px;
       border: 1px solid #ddd;
       border-radius: 8px;
@@ -47,10 +96,15 @@
       background: white;
       cursor: pointer;
     }
+    input[type="text"], input[type="password"] {
+      cursor: text;
+      min-width: 200px;
+    }
     button {
       background: #4f46e5;
       color: white;
       border: none;
+      font-weight: 500;
     }
     button:hover {
       background: #4338ca;
@@ -71,30 +125,48 @@
     button.success:hover {
       background: #059669;
     }
-    .last-updated {
-      color: #666;
+    button.danger {
+      background: #ef4444;
+    }
+    button.danger:hover {
+      background: #dc2626;
+    }
+    button.outline {
+      background: transparent;
+      border: 1px solid #ddd;
+      color: #374151;
+    }
+    button.outline:hover {
+      background: #f3f4f6;
+    }
+    .api-key-bar {
+      background: white;
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .api-key-bar label {
+      font-weight: 600;
+      color: #374151;
+    }
+    .api-key-bar input {
+      flex: 1;
+      max-width: 350px;
+    }
+    .api-key-bar .status {
+      margin-left: auto;
       font-size: 13px;
     }
-    .tabs {
-      display: flex;
-      gap: 10px;
-      margin-bottom: 20px;
-      border-bottom: 2px solid #e5e7eb;
-      padding-bottom: 10px;
+    .api-key-bar .status.connected {
+      color: #10b981;
     }
-    .tab {
-      padding: 10px 20px;
-      background: none;
-      border: none;
-      cursor: pointer;
-      font-size: 16px;
-      color: #6b7280;
-      border-radius: 8px 8px 0 0;
-    }
-    .tab.active {
-      color: #4f46e5;
-      font-weight: 600;
-      background: #eef2ff;
+    .api-key-bar .status.disconnected {
+      color: #ef4444;
     }
     .tab-content {
       display: none;
@@ -104,7 +176,7 @@
     }
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 20px;
       margin-bottom: 30px;
     }
@@ -115,14 +187,14 @@
       box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
     .stat-card h3 {
-      font-size: 13px;
-      color: #666;
+      font-size: 12px;
+      color: #6b7280;
       text-transform: uppercase;
       letter-spacing: 0.5px;
       margin-bottom: 8px;
     }
     .stat-card .value {
-      font-size: 32px;
+      font-size: 28px;
       font-weight: 700;
       color: #1a1a2e;
     }
@@ -130,41 +202,31 @@
     .stat-card .value.blue { color: #3b82f6; }
     .stat-card .value.purple { color: #8b5cf6; }
     .stat-card .value.orange { color: #f97316; }
-    .charts-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
-      margin-bottom: 30px;
-    }
-    .chart-card {
-      background: white;
-      padding: 24px;
-      border-radius: 12px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-    .chart-card h2 {
-      font-size: 18px;
-      margin-bottom: 20px;
-      color: #1a1a2e;
-    }
-    .chart-container {
-      position: relative;
-      height: 300px;
-    }
-    .table-card {
+    .stat-card .value.red { color: #ef4444; }
+    .card {
       background: white;
       padding: 24px;
       border-radius: 12px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.1);
       margin-bottom: 20px;
     }
-    .table-card h2 {
+    .card h3 {
       font-size: 18px;
       margin-bottom: 20px;
       color: #1a1a2e;
       display: flex;
       justify-content: space-between;
       align-items: center;
+    }
+    .charts-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+    .chart-container {
+      position: relative;
+      height: 280px;
     }
     table {
       width: 100%;
@@ -176,43 +238,18 @@
       border-bottom: 1px solid #eee;
     }
     th {
-      font-size: 12px;
+      font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      color: #666;
+      color: #6b7280;
       font-weight: 600;
     }
     td {
       font-size: 14px;
     }
-    .progress-bar {
-      width: 100px;
-      height: 8px;
-      background: #e5e7eb;
-      border-radius: 4px;
-      overflow: hidden;
-      display: inline-block;
-      vertical-align: middle;
-      margin-right: 8px;
-    }
-    .progress-bar .fill {
-      height: 100%;
-      background: #10b981;
-      border-radius: 4px;
-    }
-    .loading {
-      text-align: center;
-      padding: 60px;
-      color: #666;
-    }
-    .error {
-      text-align: center;
-      padding: 60px;
-      color: #ef4444;
-    }
     .badge {
       display: inline-block;
-      padding: 4px 8px;
+      padding: 4px 10px;
       border-radius: 4px;
       font-size: 12px;
       font-weight: 600;
@@ -221,10 +258,180 @@
     .badge.mql { background: #fef3c7; color: #d97706; }
     .badge.high-fit { background: #d1fae5; color: #059669; }
     .badge.premium { background: #dbeafe; color: #2563eb; }
-    input[type="checkbox"] {
+    .badge.success { background: #d1fae5; color: #059669; }
+    .badge.error { background: #fee2e2; color: #dc2626; }
+    .badge.warning { background: #fef3c7; color: #d97706; }
+    .badge.info { background: #dbeafe; color: #2563eb; }
+    .progress-bar {
+      width: 80px;
+      height: 6px;
+      background: #e5e7eb;
+      border-radius: 3px;
+      overflow: hidden;
+      display: inline-block;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+    .progress-bar .fill {
+      height: 100%;
+      background: #10b981;
+      border-radius: 3px;
+    }
+    .loading {
+      text-align: center;
+      padding: 60px;
+      color: #6b7280;
+    }
+    .loading::after {
+      content: '';
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 2px solid #e5e7eb;
+      border-top-color: #4f46e5;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-left: 10px;
+      vertical-align: middle;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .error-message {
+      text-align: center;
+      padding: 40px;
+      color: #ef4444;
+      background: #fef2f2;
+      border-radius: 8px;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    .form-group label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #374151;
+    }
+    .form-group input {
+      width: 100%;
+    }
+    .form-group small {
+      color: #6b7280;
+      font-size: 12px;
+      margin-top: 4px;
+      display: block;
+    }
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .status-dot.green { background: #10b981; }
+    .status-dot.red { background: #ef4444; }
+    .status-dot.yellow { background: #f59e0b; }
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+    }
+    .log-entry {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+      padding: 8px 12px;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      gap: 12px;
+    }
+    .log-entry:hover {
+      background: #f9fafb;
+    }
+    .log-entry .timestamp {
+      color: #6b7280;
+      white-space: nowrap;
+    }
+    .log-entry .level {
+      width: 50px;
+      font-weight: 600;
+    }
+    .log-entry .level.info { color: #3b82f6; }
+    .log-entry .level.warn { color: #f59e0b; }
+    .log-entry .level.error { color: #ef4444; }
+    .log-entry .message {
+      flex: 1;
+      word-break: break-word;
+    }
+    .logs-container {
+      max-height: 500px;
+      overflow-y: auto;
+      background: #fafafa;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+    }
+    .enrichment-result {
+      background: #f9fafb;
+      border-radius: 8px;
+      padding: 20px;
+      margin-top: 20px;
+    }
+    .enrichment-result h4 {
+      margin-bottom: 15px;
+      color: #1a1a2e;
+    }
+    .result-section {
+      margin-bottom: 15px;
+      padding-bottom: 15px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .result-section:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+    .result-section h5 {
+      font-size: 13px;
+      color: #6b7280;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+    }
+    .result-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+    }
+    .result-item {
+      background: white;
+      padding: 10px;
+      border-radius: 6px;
+    }
+    .result-item .label {
+      font-size: 11px;
+      color: #6b7280;
+      margin-bottom: 2px;
+    }
+    .result-item .value {
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 15px;
+    }
+    .checkbox-row input[type="checkbox"] {
       width: 18px;
       height: 18px;
-      cursor: pointer;
     }
     .selection-bar {
       display: flex;
@@ -235,73 +442,161 @@
       border-radius: 8px;
       margin-bottom: 20px;
     }
-    .api-key-input {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      margin-bottom: 20px;
-      padding: 15px;
-      background: #fff7ed;
-      border-radius: 8px;
-      border: 1px solid #fed7aa;
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
     }
-    .api-key-input input {
-      flex: 1;
-      max-width: 400px;
-    }
-    .api-key-input label {
-      font-weight: 600;
-      color: #9a3412;
+    @media (max-width: 1024px) {
+      .sidebar {
+        width: 200px;
+      }
+      .main-content {
+        margin-left: 200px;
+      }
+      .charts-row {
+        grid-template-columns: 1fr;
+      }
     }
     @media (max-width: 768px) {
-      .charts-row {
+      .sidebar {
+        position: relative;
+        width: 100%;
+      }
+      .main-content {
+        margin-left: 0;
+      }
+      .form-row {
         grid-template-columns: 1fr;
       }
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>TSI Fit Score Dashboard</h1>
-      <div class="controls">
-        <select id="daysSelect">
-          <option value="7">Last 7 days</option>
-          <option value="30" selected>Last 30 days</option>
-          <option value="60">Last 60 days</option>
-          <option value="90">Last 90 days</option>
-        </select>
-        <button onclick="loadData()">Refresh</button>
-        <span class="last-updated" id="lastUpdated"></span>
-      </div>
-    </header>
+  <nav class="sidebar">
+    <div class="logo">
+      <h1>TSI Fit Score</h1>
+      <span>Lead Enrichment Engine</span>
+    </div>
+    <div class="nav-item active" onclick="switchTab('dashboard')">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+      Dashboard
+    </div>
+    <div class="nav-item" onclick="switchTab('enrich')">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+      Manual Enrichment
+    </div>
+    <div class="nav-item" onclick="switchTab('unenriched')">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+      Unenriched Leads
+    </div>
+    <div class="nav-item" onclick="switchTab('setup')">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+      Setup & Logs
+    </div>
+  </nav>
 
-    <div class="api-key-input">
+  <main class="main-content">
+    <div class="api-key-bar">
       <label for="apiKey">API Key:</label>
       <input type="password" id="apiKey" placeholder="Enter your API key" onchange="saveApiKey()">
-      <button class="secondary" onclick="toggleApiKey()">Show</button>
+      <button class="outline" onclick="toggleApiKey()">Show</button>
+      <button class="secondary" onclick="testConnection()">Test Connection</button>
+      <span class="status" id="connectionStatus"></span>
     </div>
 
-    <div class="tabs">
-      <button class="tab active" onclick="switchTab('overview')">Overview</button>
-      <button class="tab" onclick="switchTab('unenriched')">Unenriched Leads</button>
-    </div>
-
-    <div id="overview-tab" class="tab-content active">
-      <div id="overview-content">
-        <div class="loading">Loading dashboard data...</div>
+    <!-- Dashboard Tab -->
+    <div id="dashboard-tab" class="tab-content active">
+      <div class="header">
+        <h2>Dashboard</h2>
+        <div class="header-controls">
+          <select id="daysSelect" onchange="loadDashboard()">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="60">Last 60 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <button onclick="loadDashboard()">Refresh</button>
+        </div>
+      </div>
+      <div id="dashboard-content">
+        <div class="loading">Loading dashboard data</div>
       </div>
     </div>
 
+    <!-- Manual Enrichment Tab -->
+    <div id="enrich-tab" class="tab-content">
+      <div class="header">
+        <h2>Manual Lead Enrichment</h2>
+      </div>
+      <div class="card">
+        <h3>Enrich a Salesforce Lead</h3>
+        <p style="color: #6b7280; margin-bottom: 20px;">Enter a Salesforce Lead ID to fetch lead data and run enrichment. The system will update the Fit Score in Salesforce automatically.</p>
+        <div class="form-group">
+          <label for="leadId">Salesforce Lead ID</label>
+          <input type="text" id="leadId" placeholder="00Q..." style="max-width: 400px;">
+          <small>Example: 00Q5e000001ABC123</small>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="updateSalesforce" checked>
+          <label for="updateSalesforce">Update Salesforce with enrichment results</label>
+        </div>
+        <div style="display: flex; gap: 12px;">
+          <button onclick="lookupLead()">Lookup Lead</button>
+          <button class="success" onclick="enrichLead()" id="enrichBtn">Enrich Lead</button>
+        </div>
+        <div id="enrichment-result"></div>
+      </div>
+    </div>
+
+    <!-- Unenriched Leads Tab -->
     <div id="unenriched-tab" class="tab-content">
+      <div class="header">
+        <h2>Unenriched Leads</h2>
+        <div class="header-controls">
+          <button onclick="loadUnenrichedLeads()">Refresh</button>
+        </div>
+      </div>
       <div id="unenriched-content">
-        <div class="loading">Loading unenriched leads...</div>
+        <div class="loading">Loading unenriched leads</div>
       </div>
     </div>
-  </div>
+
+    <!-- Setup Tab -->
+    <div id="setup-tab" class="tab-content">
+      <div class="header">
+        <h2>Setup & Configuration</h2>
+        <div class="header-controls">
+          <button onclick="loadSetup()">Refresh Status</button>
+        </div>
+      </div>
+
+      <div id="setup-content">
+        <div class="loading">Loading system status</div>
+      </div>
+
+      <div class="card" style="margin-top: 20px;">
+        <h3>
+          Application Logs
+          <div style="display: flex; gap: 10px;">
+            <select id="logLevel" onchange="loadLogs()">
+              <option value="">All Levels</option>
+              <option value="info">Info</option>
+              <option value="warn">Warnings</option>
+              <option value="error">Errors</option>
+            </select>
+            <button class="outline" onclick="loadLogs()">Refresh</button>
+          </div>
+        </h3>
+        <div id="logs-content" class="logs-container">
+          <div class="loading">Loading logs</div>
+        </div>
+      </div>
+    </div>
+  </main>
 
   <script>
-    let tierChart, sourceChart;
+    let tierChart, sourceChart, activityChart;
     let selectedLeads = new Set();
 
     // API Key management
@@ -313,6 +608,7 @@
       const key = document.getElementById('apiKey').value;
       if (key) {
         localStorage.setItem('tsi_api_key', key);
+        testConnection();
       }
     }
 
@@ -326,27 +622,50 @@
       const savedKey = localStorage.getItem('tsi_api_key');
       if (savedKey) {
         document.getElementById('apiKey').value = savedKey;
+        testConnection();
       }
+      loadDashboard();
     });
+
+    // Test connection
+    async function testConnection() {
+      const status = document.getElementById('connectionStatus');
+      status.textContent = 'Testing...';
+      status.className = 'status';
+
+      try {
+        const response = await fetchWithAuth('/api/setup/status');
+        if (response.ok) {
+          status.textContent = 'Connected';
+          status.className = 'status connected';
+        } else {
+          status.textContent = 'Auth Failed';
+          status.className = 'status disconnected';
+        }
+      } catch (error) {
+        status.textContent = 'Connection Error';
+        status.className = 'status disconnected';
+      }
+    }
 
     // Tab switching
     function switchTab(tab) {
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
 
       document.querySelector(`[onclick="switchTab('${tab}')"]`).classList.add('active');
       document.getElementById(`${tab}-tab`).classList.add('active');
 
-      if (tab === 'unenriched') {
-        loadUnenrichedLeads();
-      }
+      if (tab === 'dashboard') loadDashboard();
+      else if (tab === 'unenriched') loadUnenrichedLeads();
+      else if (tab === 'setup') { loadSetup(); loadLogs(); }
     }
 
     // Fetch with API key
     async function fetchWithAuth(url, options = {}) {
       const apiKey = getApiKey();
       if (!apiKey) {
-        throw new Error('API key is required. Please enter your API key above.');
+        throw new Error('API key is required');
       }
 
       return fetch(url, {
@@ -359,86 +678,100 @@
       });
     }
 
-    async function loadData() {
+    // Dashboard
+    async function loadDashboard() {
       const days = document.getElementById('daysSelect').value;
-      const content = document.getElementById('overview-content');
-
-      content.innerHTML = '<div class="loading">Loading dashboard data...</div>';
+      const content = document.getElementById('dashboard-content');
+      content.innerHTML = '<div class="loading">Loading dashboard data</div>';
 
       try {
-        const response = await fetchWithAuth(`/api/dashboard/stats?days=${days}`);
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || 'Failed to fetch data');
-        }
+        const [statsRes, dbStatsRes] = await Promise.all([
+          fetchWithAuth(`/api/dashboard/stats?days=${days}`),
+          fetchWithAuth('/api/setup/database-stats')
+        ]);
 
-        const data = await response.json();
-        renderDashboard(data);
+        if (!statsRes.ok) throw new Error('Failed to fetch stats');
+
+        const stats = await statsRes.json();
+        const dbStats = dbStatsRes.ok ? await dbStatsRes.json() : null;
+
+        renderDashboard(stats, dbStats);
       } catch (error) {
-        content.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+        content.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
       }
     }
 
-    function renderDashboard(data) {
-      const content = document.getElementById('overview-content');
-
-      document.getElementById('lastUpdated').textContent =
-        `Updated: ${new Date(data.lastUpdated).toLocaleString()}`;
+    function renderDashboard(stats, dbStats) {
+      const content = document.getElementById('dashboard-content');
 
       content.innerHTML = `
         <div class="stats-grid">
           <div class="stat-card">
             <h3>Total Leads</h3>
-            <div class="value">${data.totalLeads.toLocaleString()}</div>
+            <div class="value">${stats.totalLeads.toLocaleString()}</div>
           </div>
           <div class="stat-card">
             <h3>Enriched</h3>
-            <div class="value blue">${data.enrichedLeads.toLocaleString()}</div>
+            <div class="value blue">${stats.enrichedLeads.toLocaleString()}</div>
           </div>
           <div class="stat-card">
             <h3>Unenriched</h3>
-            <div class="value orange">${data.unenrichedLeads.toLocaleString()}</div>
+            <div class="value orange">${stats.unenrichedLeads.toLocaleString()}</div>
           </div>
           <div class="stat-card">
             <h3>Enrichment Rate</h3>
-            <div class="value green">${data.enrichmentRate.toFixed(1)}%</div>
+            <div class="value green">${stats.enrichmentRate.toFixed(1)}%</div>
           </div>
           <div class="stat-card">
             <h3>Avg Fit Score</h3>
-            <div class="value purple">${data.avgFitScore.toFixed(1)}</div>
+            <div class="value purple">${stats.avgFitScore.toFixed(1)}</div>
           </div>
+          ${dbStats ? `
+          <div class="stat-card">
+            <h3>Local DB Records</h3>
+            <div class="value">${parseInt(dbStats.stats.total_enrichments).toLocaleString()}</div>
+          </div>
+          ` : ''}
         </div>
 
         <div class="charts-row">
-          <div class="chart-card">
-            <h2>Fit Tier Distribution</h2>
+          <div class="card">
+            <h3>Fit Tier Distribution</h3>
             <div class="chart-container">
               <canvas id="tierChart"></canvas>
             </div>
           </div>
-          <div class="chart-card">
-            <h2>Leads by Source</h2>
+          <div class="card">
+            <h3>Leads by Source</h3>
             <div class="chart-container">
               <canvas id="sourceChart"></canvas>
             </div>
           </div>
         </div>
 
-        <div class="table-card">
-          <h2>Lead Source Breakdown</h2>
+        ${dbStats && dbStats.recentActivity.length > 0 ? `
+        <div class="card">
+          <h3>Enrichment Activity (Last 30 Days)</h3>
+          <div class="chart-container" style="height: 200px;">
+            <canvas id="activityChart"></canvas>
+          </div>
+        </div>
+        ` : ''}
+
+        <div class="card">
+          <h3>Lead Source Breakdown</h3>
           <table>
             <thead>
               <tr>
                 <th>Lead Source</th>
-                <th>Total Leads</th>
+                <th>Total</th>
                 <th>Enriched</th>
-                <th>Enrichment Rate</th>
-                <th>Avg Fit Score</th>
-                <th>Tier Distribution</th>
+                <th>Rate</th>
+                <th>Avg Score</th>
               </tr>
             </thead>
             <tbody>
-              ${data.byLeadSource.map(source => `
+              ${stats.byLeadSource.slice(0, 10).map(source => `
                 <tr>
                   <td><strong>${source.leadSource}</strong></td>
                   <td>${source.totalLeads.toLocaleString()}</td>
@@ -447,10 +780,9 @@
                     <div class="progress-bar">
                       <div class="fill" style="width: ${source.enrichmentRate}%"></div>
                     </div>
-                    ${source.enrichmentRate.toFixed(1)}%
+                    ${source.enrichmentRate.toFixed(0)}%
                   </td>
                   <td>${source.avgFitScore.toFixed(1)}</td>
-                  <td>${source.tierDistribution.map(t => `${t.tier}: ${t.count}`).join(' | ')}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -458,13 +790,16 @@
         </div>
       `;
 
-      renderTierChart(data.tierDistribution);
-      renderSourceChart(data.byLeadSource);
+      renderTierChart(stats.tierDistribution);
+      renderSourceChart(stats.byLeadSource);
+      if (dbStats && dbStats.recentActivity.length > 0) {
+        renderActivityChart(dbStats.recentActivity);
+      }
     }
 
     function renderTierChart(distribution) {
-      const ctx = document.getElementById('tierChart').getContext('2d');
-
+      const ctx = document.getElementById('tierChart');
+      if (!ctx) return;
       if (tierChart) tierChart.destroy();
 
       const colors = {
@@ -479,7 +814,6 @@
         data: {
           labels: distribution.map(d => d.tier),
           datasets: [{
-            label: 'Number of Leads',
             data: distribution.map(d => d.count),
             backgroundColor: distribution.map(d => colors[d.tier] || '#6b7280'),
             borderRadius: 6,
@@ -488,33 +822,22 @@
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false }
-          },
+          plugins: { legend: { display: false } },
           scales: {
-            y: {
-              beginAtZero: true,
-              grid: { color: '#f0f0f0' }
-            },
-            x: {
-              grid: { display: false }
-            }
+            y: { beginAtZero: true, grid: { color: '#f0f0f0' } },
+            x: { grid: { display: false } }
           }
         }
       });
     }
 
     function renderSourceChart(sources) {
-      const ctx = document.getElementById('sourceChart').getContext('2d');
-
+      const ctx = document.getElementById('sourceChart');
+      if (!ctx) return;
       if (sourceChart) sourceChart.destroy();
 
-      const topSources = sources.slice(0, 8);
-
-      const colors = [
-        '#4f46e5', '#7c3aed', '#ec4899', '#f43f5e',
-        '#f97316', '#eab308', '#22c55e', '#06b6d4'
-      ];
+      const topSources = sources.slice(0, 6);
+      const colors = ['#4f46e5', '#7c3aed', '#ec4899', '#f43f5e', '#f97316', '#22c55e'];
 
       sourceChart = new Chart(ctx, {
         type: 'doughnut',
@@ -530,35 +853,219 @@
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: {
-              position: 'right',
-              labels: {
-                padding: 15,
-                usePointStyle: true,
-              }
-            }
+            legend: { position: 'right', labels: { padding: 12, usePointStyle: true } }
           }
         }
       });
     }
 
-    // Unenriched leads tab
+    function renderActivityChart(activity) {
+      const ctx = document.getElementById('activityChart');
+      if (!ctx) return;
+      if (activityChart) activityChart.destroy();
+
+      const sorted = [...activity].reverse();
+
+      activityChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: sorted.map(a => new Date(a.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })),
+          datasets: [{
+            label: 'Enrichments',
+            data: sorted.map(a => parseInt(a.count)),
+            borderColor: '#4f46e5',
+            backgroundColor: 'rgba(79, 70, 229, 0.1)',
+            fill: true,
+            tension: 0.3,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: { beginAtZero: true, grid: { color: '#f0f0f0' } },
+            x: { grid: { display: false } }
+          }
+        }
+      });
+    }
+
+    // Manual Enrichment
+    async function lookupLead() {
+      const leadId = document.getElementById('leadId').value.trim();
+      if (!leadId) {
+        alert('Please enter a Salesforce Lead ID');
+        return;
+      }
+
+      const resultDiv = document.getElementById('enrichment-result');
+      resultDiv.innerHTML = '<div class="loading">Looking up lead</div>';
+
+      try {
+        const response = await fetchWithAuth(`/api/lead/${leadId}`);
+        const data = await response.json();
+
+        if (!data.salesforce && !data.localEnrichment) {
+          resultDiv.innerHTML = '<div class="error-message">Lead not found</div>';
+          return;
+        }
+
+        let html = '<div class="enrichment-result">';
+
+        if (data.salesforce) {
+          html += `
+            <div class="result-section">
+              <h5>Salesforce Lead Data</h5>
+              <div class="result-grid">
+                <div class="result-item"><div class="label">Company</div><div class="value">${data.salesforce.Company || '-'}</div></div>
+                <div class="result-item"><div class="label">Website</div><div class="value">${data.salesforce.Website || '-'}</div></div>
+                <div class="result-item"><div class="label">Phone</div><div class="value">${data.salesforce.Phone || '-'}</div></div>
+                <div class="result-item"><div class="label">Location</div><div class="value">${[data.salesforce.City, data.salesforce.State].filter(Boolean).join(', ') || '-'}</div></div>
+                <div class="result-item"><div class="label">Lead Source</div><div class="value">${data.salesforce.LeadSource || '-'}</div></div>
+                <div class="result-item"><div class="label">Status</div><div class="value">${data.salesforce.Status || '-'}</div></div>
+                ${data.salesforce.Fit_Score__c ? `<div class="result-item"><div class="label">Current Fit Score</div><div class="value">${data.salesforce.Fit_Score__c}</div></div>` : ''}
+                ${data.salesforce.Fit_Tier__c ? `<div class="result-item"><div class="label">Current Tier</div><div class="value"><span class="badge ${data.salesforce.Fit_Tier__c.toLowerCase().replace(' ', '-')}">${data.salesforce.Fit_Tier__c}</span></div></div>` : ''}
+              </div>
+            </div>
+          `;
+        }
+
+        if (data.localEnrichment) {
+          html += `
+            <div class="result-section">
+              <h5>Last Local Enrichment (${new Date(data.localEnrichment.created_at).toLocaleString()})</h5>
+              <div class="result-grid">
+                <div class="result-item"><div class="label">Fit Score</div><div class="value">${data.localEnrichment.fit_score ?? '-'}</div></div>
+                <div class="result-item"><div class="label">Fit Tier</div><div class="value">${data.localEnrichment.fit_tier ? `<span class="badge ${data.localEnrichment.fit_tier.toLowerCase().replace(' ', '-')}">${data.localEnrichment.fit_tier}</span>` : '-'}</div></div>
+                <div class="result-item"><div class="label">Status</div><div class="value">${data.localEnrichment.enrichment_status || '-'}</div></div>
+              </div>
+            </div>
+          `;
+        }
+
+        html += '</div>';
+        resultDiv.innerHTML = html;
+      } catch (error) {
+        resultDiv.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+      }
+    }
+
+    async function enrichLead() {
+      const leadId = document.getElementById('leadId').value.trim();
+      if (!leadId) {
+        alert('Please enter a Salesforce Lead ID');
+        return;
+      }
+
+      const updateSalesforce = document.getElementById('updateSalesforce').checked;
+      const btn = document.getElementById('enrichBtn');
+      const resultDiv = document.getElementById('enrichment-result');
+
+      btn.disabled = true;
+      btn.textContent = 'Enriching...';
+      resultDiv.innerHTML = '<div class="loading">Running enrichment (this may take 30-60 seconds)</div>';
+
+      try {
+        const response = await fetchWithAuth('/api/enrich-by-id', {
+          method: 'POST',
+          body: JSON.stringify({
+            salesforce_lead_id: leadId,
+            update_salesforce: updateSalesforce
+          })
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+          resultDiv.innerHTML = `<div class="error-message">Enrichment failed: ${data.error}</div>`;
+          return;
+        }
+
+        resultDiv.innerHTML = `
+          <div class="enrichment-result">
+            <h4 style="color: #10b981;">Enrichment Completed Successfully</h4>
+
+            <div class="result-section">
+              <h5>Fit Score Result</h5>
+              <div class="result-grid">
+                <div class="result-item"><div class="label">Fit Score</div><div class="value" style="font-size: 24px; color: #4f46e5;">${data.enrichment.fit_score}</div></div>
+                <div class="result-item"><div class="label">Fit Tier</div><div class="value"><span class="badge ${data.enrichment.fit_tier.toLowerCase().replace(' ', '-')}">${data.enrichment.fit_tier}</span></div></div>
+                <div class="result-item"><div class="label">Duration</div><div class="value">${(data.duration_ms / 1000).toFixed(1)}s</div></div>
+                <div class="result-item"><div class="label">Salesforce Updated</div><div class="value">${data.salesforce_updated ? '<span class="badge success">Yes</span>' : '<span class="badge warning">No</span>'}</div></div>
+              </div>
+            </div>
+
+            <div class="result-section">
+              <h5>Lead Info</h5>
+              <div class="result-grid">
+                <div class="result-item"><div class="label">Company</div><div class="value">${data.lead.company || '-'}</div></div>
+                <div class="result-item"><div class="label">Website</div><div class="value">${data.lead.website || '-'}</div></div>
+                <div class="result-item"><div class="label">Phone</div><div class="value">${data.lead.phone || '-'}</div></div>
+                <div class="result-item"><div class="label">Location</div><div class="value">${[data.lead.city, data.lead.state].filter(Boolean).join(', ') || '-'}</div></div>
+              </div>
+            </div>
+
+            ${data.enrichment.google_places ? `
+            <div class="result-section">
+              <h5>Google Places Data</h5>
+              <div class="result-grid">
+                <div class="result-item"><div class="label">Rating</div><div class="value">${data.enrichment.google_places.gmb_rating ?? '-'}</div></div>
+                <div class="result-item"><div class="label">Reviews</div><div class="value">${data.enrichment.google_places.gmb_review_count ?? '-'}</div></div>
+                <div class="result-item"><div class="label">Operational</div><div class="value">${data.enrichment.google_places.gmb_is_operational ? 'Yes' : 'No'}</div></div>
+              </div>
+            </div>
+            ` : ''}
+
+            ${data.enrichment.website_tech ? `
+            <div class="result-section">
+              <h5>Website Tech</h5>
+              <div class="result-grid">
+                <div class="result-item"><div class="label">Meta Pixel</div><div class="value">${data.enrichment.website_tech.has_meta_pixel ? 'Yes' : 'No'}</div></div>
+                <div class="result-item"><div class="label">GA4</div><div class="value">${data.enrichment.website_tech.has_ga4 ? 'Yes' : 'No'}</div></div>
+                <div class="result-item"><div class="label">Google Ads</div><div class="value">${data.enrichment.website_tech.has_google_ads_tag ? 'Yes' : 'No'}</div></div>
+                <div class="result-item"><div class="label">HubSpot</div><div class="value">${data.enrichment.website_tech.has_hubspot ? 'Yes' : 'No'}</div></div>
+                <div class="result-item"><div class="label">Pixel Count</div><div class="value">${data.enrichment.website_tech.pixel_count ?? 0}</div></div>
+              </div>
+            </div>
+            ` : ''}
+
+            ${data.enrichment.clay ? `
+            <div class="result-section">
+              <h5>Clay Data</h5>
+              <div class="result-grid">
+                <div class="result-item"><div class="label">Employees</div><div class="value">${data.enrichment.clay.employee_estimate ?? '-'}</div></div>
+                <div class="result-item"><div class="label">Years in Business</div><div class="value">${data.enrichment.clay.years_in_business ?? '-'}</div></div>
+              </div>
+            </div>
+            ` : ''}
+
+            <div class="result-section">
+              <h5>Score Breakdown</h5>
+              <pre style="background: #f9fafb; padding: 12px; border-radius: 6px; font-size: 12px; overflow-x: auto;">${JSON.stringify(data.enrichment.score_breakdown, null, 2)}</pre>
+            </div>
+          </div>
+        `;
+      } catch (error) {
+        resultDiv.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Enrich Lead';
+      }
+    }
+
+    // Unenriched Leads
     async function loadUnenrichedLeads() {
       const content = document.getElementById('unenriched-content');
-      content.innerHTML = '<div class="loading">Loading unenriched leads...</div>';
+      content.innerHTML = '<div class="loading">Loading unenriched leads</div>';
       selectedLeads.clear();
 
       try {
         const response = await fetchWithAuth('/api/dashboard/unenriched?limit=100');
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || 'Failed to fetch unenriched leads');
-        }
-
         const data = await response.json();
         renderUnenrichedLeads(data);
       } catch (error) {
-        content.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+        content.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
       }
     }
 
@@ -568,7 +1075,7 @@
       content.innerHTML = `
         <div class="stats-grid">
           <div class="stat-card">
-            <h3>Total Unenriched Leads</h3>
+            <h3>Total Unenriched</h3>
             <div class="value orange">${data.totalCount.toLocaleString()}</div>
           </div>
           <div class="stat-card">
@@ -580,16 +1087,16 @@
         <div class="selection-bar">
           <div>
             <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
-            <label for="selectAll">Select All</label>
+            <label for="selectAll" style="margin-left: 8px;">Select All</label>
             <span id="selectedCount" style="margin-left: 15px; color: #6b7280;">0 selected</span>
           </div>
-          <button class="success" onclick="enrichSelected()" id="enrichBtn" disabled>
-            Enrich Selected Leads
+          <button class="success" onclick="enrichSelected()" id="batchEnrichBtn" disabled>
+            Enrich Selected (max 10)
           </button>
         </div>
 
-        <div class="table-card">
-          <h2>Unenriched Leads (Most Recent)</h2>
+        <div class="card">
+          <h3>Unenriched Leads</h3>
           <table>
             <thead>
               <tr>
@@ -598,19 +1105,16 @@
                 <th>Website</th>
                 <th>Phone</th>
                 <th>Location</th>
-                <th>Lead Source</th>
+                <th>Source</th>
                 <th>Created</th>
               </tr>
             </thead>
             <tbody>
               ${data.leads.map(lead => `
                 <tr>
-                  <td>
-                    <input type="checkbox" class="lead-checkbox" data-id="${lead.id}"
-                           onchange="toggleLeadSelection('${lead.id}')">
-                  </td>
+                  <td><input type="checkbox" class="lead-checkbox" data-id="${lead.id}" onchange="toggleLeadSelection('${lead.id}')"></td>
                   <td><strong>${lead.company || '-'}</strong></td>
-                  <td>${lead.website ? `<a href="${lead.website}" target="_blank">${truncate(lead.website, 30)}</a>` : '-'}</td>
+                  <td>${lead.website ? `<a href="${lead.website}" target="_blank">${truncate(lead.website, 25)}</a>` : '-'}</td>
                   <td>${lead.phone || '-'}</td>
                   <td>${[lead.city, lead.state].filter(Boolean).join(', ') || '-'}</td>
                   <td>${lead.leadSource || '-'}</td>
@@ -621,7 +1125,7 @@
           </table>
         </div>
 
-        <div id="enrichmentResults"></div>
+        <div id="batchResults"></div>
       `;
     }
 
@@ -631,34 +1135,24 @@
     }
 
     function toggleLeadSelection(id) {
-      if (selectedLeads.has(id)) {
-        selectedLeads.delete(id);
-      } else {
-        selectedLeads.add(id);
-      }
+      if (selectedLeads.has(id)) selectedLeads.delete(id);
+      else selectedLeads.add(id);
       updateSelectionUI();
     }
 
     function toggleSelectAll() {
       const selectAll = document.getElementById('selectAll').checked;
-      const checkboxes = document.querySelectorAll('.lead-checkbox');
-
-      checkboxes.forEach(cb => {
+      document.querySelectorAll('.lead-checkbox').forEach(cb => {
         cb.checked = selectAll;
-        const id = cb.dataset.id;
-        if (selectAll) {
-          selectedLeads.add(id);
-        } else {
-          selectedLeads.delete(id);
-        }
+        if (selectAll) selectedLeads.add(cb.dataset.id);
+        else selectedLeads.delete(cb.dataset.id);
       });
-
       updateSelectionUI();
     }
 
     function updateSelectionUI() {
       document.getElementById('selectedCount').textContent = `${selectedLeads.size} selected`;
-      document.getElementById('enrichBtn').disabled = selectedLeads.size === 0;
+      document.getElementById('batchEnrichBtn').disabled = selectedLeads.size === 0;
     }
 
     async function enrichSelected() {
@@ -668,12 +1162,12 @@
         return;
       }
 
-      const btn = document.getElementById('enrichBtn');
+      const btn = document.getElementById('batchEnrichBtn');
+      const resultsDiv = document.getElementById('batchResults');
+
       btn.disabled = true;
       btn.textContent = 'Enriching...';
-
-      const resultsDiv = document.getElementById('enrichmentResults');
-      resultsDiv.innerHTML = '<div class="loading">Processing enrichment...</div>';
+      resultsDiv.innerHTML = '<div class="loading">Processing enrichment</div>';
 
       try {
         const response = await fetchWithAuth('/api/dashboard/enrich-batch', {
@@ -681,44 +1175,23 @@
           body: JSON.stringify({ lead_ids: Array.from(selectedLeads) }),
         });
 
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || 'Enrichment failed');
-        }
-
         const data = await response.json();
 
         resultsDiv.innerHTML = `
-          <div class="table-card">
-            <h2>Enrichment Results</h2>
+          <div class="card">
+            <h3>Enrichment Results</h3>
             <div class="stats-grid" style="margin-bottom: 20px;">
-              <div class="stat-card">
-                <h3>Processed</h3>
-                <div class="value">${data.processed}</div>
-              </div>
-              <div class="stat-card">
-                <h3>Successful</h3>
-                <div class="value green">${data.successful}</div>
-              </div>
-              <div class="stat-card">
-                <h3>Failed</h3>
-                <div class="value" style="color: #ef4444;">${data.failed}</div>
-              </div>
+              <div class="stat-card"><h3>Processed</h3><div class="value">${data.processed}</div></div>
+              <div class="stat-card"><h3>Successful</h3><div class="value green">${data.successful}</div></div>
+              <div class="stat-card"><h3>Failed</h3><div class="value red">${data.failed}</div></div>
             </div>
             <table>
-              <thead>
-                <tr>
-                  <th>Lead ID</th>
-                  <th>Status</th>
-                  <th>Fit Score</th>
-                  <th>Fit Tier</th>
-                </tr>
-              </thead>
+              <thead><tr><th>Lead ID</th><th>Status</th><th>Fit Score</th><th>Fit Tier</th></tr></thead>
               <tbody>
                 ${data.results.map(r => `
                   <tr>
                     <td>${r.id}</td>
-                    <td>${r.success ? '<span style="color: #10b981;">Success</span>' : `<span style="color: #ef4444;">Failed: ${r.error}</span>`}</td>
+                    <td>${r.success ? '<span class="badge success">Success</span>' : `<span class="badge error">Failed</span>`}</td>
                     <td>${r.fit_score ?? '-'}</td>
                     <td>${r.fit_tier ? `<span class="badge ${r.fit_tier.toLowerCase().replace(' ', '-')}">${r.fit_tier}</span>` : '-'}</td>
                   </tr>
@@ -728,21 +1201,170 @@
           </div>
         `;
 
-        // Refresh the list
         setTimeout(() => loadUnenrichedLeads(), 2000);
       } catch (error) {
-        resultsDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+        resultsDiv.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Enrich Selected Leads';
+        btn.textContent = 'Enrich Selected (max 10)';
       }
     }
 
-    // Load data on page load
-    loadData();
+    // Setup Tab
+    async function loadSetup() {
+      const content = document.getElementById('setup-content');
+      content.innerHTML = '<div class="loading">Loading system status</div>';
 
-    // Auto-refresh every 5 minutes
-    setInterval(loadData, 5 * 60 * 1000);
+      try {
+        const [statusRes, dbStatsRes] = await Promise.all([
+          fetchWithAuth('/api/setup/status'),
+          fetchWithAuth('/api/setup/database-stats')
+        ]);
+
+        const status = await statusRes.json();
+        const dbStats = dbStatsRes.ok ? await dbStatsRes.json() : null;
+
+        content.innerHTML = `
+          <div class="config-grid">
+            <div class="card">
+              <h3>Service Connections</h3>
+              <table>
+                <tbody>
+                  <tr>
+                    <td><strong>PostgreSQL Database</strong></td>
+                    <td>
+                      <div class="status-indicator">
+                        <span class="status-dot ${status.services.database.connected ? 'green' : 'red'}"></span>
+                        ${status.services.database.connected ? 'Connected' : 'Disconnected'}
+                      </div>
+                      ${status.services.database.error ? `<div style="color: #ef4444; font-size: 12px;">${status.services.database.error}</div>` : ''}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><strong>Salesforce</strong></td>
+                    <td>
+                      <div class="status-indicator">
+                        <span class="status-dot ${status.services.salesforce.connected ? 'green' : 'red'}"></span>
+                        ${status.services.salesforce.connected ? 'Connected' : 'Disconnected'}
+                      </div>
+                      ${status.services.salesforce.error ? `<div style="color: #ef4444; font-size: 12px;">${status.services.salesforce.error}</div>` : ''}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><strong>Google Places API</strong></td>
+                    <td>
+                      <div class="status-indicator">
+                        <span class="status-dot ${status.services.googlePlaces.configured ? 'green' : 'yellow'}"></span>
+                        ${status.services.googlePlaces.configured ? 'Configured' : 'Not Configured'}
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><strong>Clay API</strong></td>
+                    <td>
+                      <div class="status-indicator">
+                        <span class="status-dot ${status.services.clay.configured ? 'green' : 'yellow'}"></span>
+                        ${status.services.clay.configured ? 'Configured' : 'Not Configured'}
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="card">
+              <h3>Environment Configuration</h3>
+              <table>
+                <tbody>
+                  ${Object.entries(status.environment).map(([key, value]) => `
+                    <tr>
+                      <td><code style="font-size: 12px;">${key}</code></td>
+                      <td><span class="badge ${value === 'NOT SET' ? 'warning' : 'info'}">${value}</span></td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          ${dbStats ? `
+          <div class="card" style="margin-top: 20px;">
+            <h3>Database Statistics</h3>
+            <div class="stats-grid">
+              <div class="stat-card"><h3>Total Records</h3><div class="value">${parseInt(dbStats.stats.total_enrichments).toLocaleString()}</div></div>
+              <div class="stat-card"><h3>Completed</h3><div class="value green">${parseInt(dbStats.stats.completed || 0).toLocaleString()}</div></div>
+              <div class="stat-card"><h3>Failed</h3><div class="value red">${parseInt(dbStats.stats.failed || 0).toLocaleString()}</div></div>
+              <div class="stat-card"><h3>Avg Fit Score</h3><div class="value purple">${dbStats.stats.avg_fit_score ?? '-'}</div></div>
+            </div>
+            ${dbStats.tierDistribution.length > 0 ? `
+            <h4 style="margin: 20px 0 10px;">Tier Distribution (Local DB)</h4>
+            <table>
+              <thead><tr><th>Tier</th><th>Count</th></tr></thead>
+              <tbody>
+                ${dbStats.tierDistribution.map(t => `
+                  <tr>
+                    <td><span class="badge ${t.fit_tier.toLowerCase().replace(' ', '-')}">${t.fit_tier}</span></td>
+                    <td>${parseInt(t.count).toLocaleString()}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+            ` : ''}
+          </div>
+          ` : ''}
+
+          <div class="card" style="margin-top: 20px;">
+            <h3>Server Info</h3>
+            <table>
+              <tbody>
+                <tr><td><strong>Server Time</strong></td><td>${new Date(status.serverTime).toLocaleString()}</td></tr>
+                <tr><td><strong>Uptime</strong></td><td>${formatUptime(status.uptime)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (error) {
+        content.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+      }
+    }
+
+    function formatUptime(seconds) {
+      const days = Math.floor(seconds / 86400);
+      const hours = Math.floor((seconds % 86400) / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const parts = [];
+      if (days > 0) parts.push(`${days}d`);
+      if (hours > 0) parts.push(`${hours}h`);
+      parts.push(`${minutes}m`);
+      return parts.join(' ');
+    }
+
+    async function loadLogs() {
+      const content = document.getElementById('logs-content');
+      const level = document.getElementById('logLevel').value;
+
+      content.innerHTML = '<div class="loading">Loading logs</div>';
+
+      try {
+        const response = await fetchWithAuth(`/api/setup/logs?limit=100${level ? `&level=${level}` : ''}`);
+        const data = await response.json();
+
+        if (data.logs.length === 0) {
+          content.innerHTML = '<div style="padding: 40px; text-align: center; color: #6b7280;">No logs found</div>';
+          return;
+        }
+
+        content.innerHTML = data.logs.map(log => `
+          <div class="log-entry">
+            <span class="timestamp">${new Date(log.timestamp).toLocaleTimeString()}</span>
+            <span class="level ${log.level}">${log.level.toUpperCase()}</span>
+            <span class="message">${log.message}${log.meta ? ` <code style="color: #6b7280;">${JSON.stringify(log.meta)}</code>` : ''}</span>
+          </div>
+        `).join('');
+      } catch (error) {
+        content.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+      }
+    }
   </script>
 </body>
 </html>
