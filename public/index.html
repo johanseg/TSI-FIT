@@ -497,24 +497,19 @@
   </nav>
 
   <main class="main-content">
-    <div class="api-key-bar">
-      <label for="apiKey">API Key:</label>
-      <input type="password" id="apiKey" placeholder="Enter your API key" onchange="saveApiKey()">
-      <button class="outline" onclick="toggleApiKey()">Show</button>
-      <button class="secondary" onclick="testConnection()">Test Connection</button>
-      <span class="status" id="connectionStatus"></span>
-    </div>
-
     <!-- Dashboard Tab -->
     <div id="dashboard-tab" class="tab-content active">
       <div class="header">
         <h2>Dashboard</h2>
         <div class="header-controls">
-          <select id="daysSelect" onchange="loadDashboard()">
-            <option value="7">Last 7 days</option>
-            <option value="30" selected>Last 30 days</option>
-            <option value="60">Last 60 days</option>
-            <option value="90">Last 90 days</option>
+          <select id="dateRange" onchange="loadDashboard()">
+            <option value="this_month" selected>This Month</option>
+            <option value="last_month">Last Month</option>
+            <option value="this_quarter">This Quarter</option>
+            <option value="last_7_days">Last 7 Days</option>
+            <option value="last_30_days">Last 30 Days</option>
+            <option value="last_90_days">Last 90 Days</option>
+            <option value="this_year">This Year</option>
           </select>
           <button onclick="loadDashboard()">Refresh</button>
         </div>
@@ -576,6 +571,21 @@
       </div>
 
       <div class="card" style="margin-top: 20px;">
+        <h3>Workato Integration</h3>
+        <p style="color: #6b7280; margin-bottom: 15px;">Configure your Workato webhook URL for sending enrichment results back to your automation workflow.</p>
+        <div class="form-group">
+          <label for="workatoWebhookUrl">Workato Webhook URL</label>
+          <div style="display: flex; gap: 12px; align-items: flex-start;">
+            <input type="text" id="workatoWebhookUrl" placeholder="https://www.workato.com/webhooks/rest/..." style="flex: 1;">
+            <button class="secondary" onclick="saveWorkatoWebhook()">Save</button>
+            <button class="outline" onclick="testWorkatoWebhook()">Test</button>
+          </div>
+          <small>This URL receives enrichment results when processing is complete. Get this from your Workato recipe's webhook trigger.</small>
+        </div>
+        <div id="webhookTestResult"></div>
+      </div>
+
+      <div class="card" style="margin-top: 20px;">
         <h3>
           Application Logs
           <div style="display: flex; gap: 10px;">
@@ -599,53 +609,57 @@
     let tierChart, sourceChart, activityChart;
     let selectedLeads = new Set();
 
-    // API Key management
-    function getApiKey() {
-      return document.getElementById('apiKey').value || localStorage.getItem('tsi_api_key') || '';
-    }
-
-    function saveApiKey() {
-      const key = document.getElementById('apiKey').value;
-      if (key) {
-        localStorage.setItem('tsi_api_key', key);
-        testConnection();
-      }
-    }
-
-    function toggleApiKey() {
-      const input = document.getElementById('apiKey');
-      input.type = input.type === 'password' ? 'text' : 'password';
-    }
-
-    // Load saved API key on page load
-    document.addEventListener('DOMContentLoaded', () => {
-      const savedKey = localStorage.getItem('tsi_api_key');
-      if (savedKey) {
-        document.getElementById('apiKey').value = savedKey;
-        testConnection();
-      }
-      loadDashboard();
+    // Load dashboard on page load
+    document.addEventListener('DOMContentLoaded', async () => {
+      // Auto-connect and load dashboard
+      await loadDashboard();
     });
 
-    // Test connection
-    async function testConnection() {
-      const status = document.getElementById('connectionStatus');
-      status.textContent = 'Testing...';
-      status.className = 'status';
+    // Calculate date range based on selection
+    function getDateRange() {
+      const selection = document.getElementById('dateRange').value;
+      const now = new Date();
+      let startDate, endDate;
 
-      try {
-        const response = await fetchWithAuth('/api/setup/status');
-        if (response.ok) {
-          status.textContent = 'Connected';
-          status.className = 'status connected';
-        } else {
-          status.textContent = 'Auth Failed';
-          status.className = 'status disconnected';
-        }
-      } catch (error) {
-        status.textContent = 'Connection Error';
-        status.className = 'status disconnected';
+      switch (selection) {
+        case 'this_month':
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          endDate = now;
+          break;
+        case 'last_month':
+          startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          endDate = new Date(now.getFullYear(), now.getMonth(), 0);
+          break;
+        case 'this_quarter':
+          const quarter = Math.floor(now.getMonth() / 3);
+          startDate = new Date(now.getFullYear(), quarter * 3, 1);
+          endDate = now;
+          break;
+        case 'last_7_days':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          endDate = now;
+          break;
+        case 'last_30_days':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          endDate = now;
+          break;
+        case 'last_90_days':
+          startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+          endDate = now;
+          break;
+        case 'this_year':
+          startDate = new Date(now.getFullYear(), 0, 1);
+          endDate = now;
+          break;
+        default:
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          endDate = now;
       }
+
+      return {
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0]
+      };
     }
 
     // Tab switching
@@ -661,48 +675,74 @@
       else if (tab === 'setup') { loadSetup(); loadLogs(); }
     }
 
-    // Fetch with API key
-    async function fetchWithAuth(url, options = {}) {
-      const apiKey = getApiKey();
-      if (!apiKey) {
-        throw new Error('API key is required');
+    // Fetch helper (no auth needed for dashboard endpoints)
+    async function fetchApi(url, options = {}) {
+      try {
+        const response = await fetch(url, {
+          ...options,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(options.headers || {}),
+          },
+        });
+        return response;
+      } catch (error) {
+        console.error('Fetch error:', url, error);
+        throw new Error(`Network error: ${error.message}`);
       }
+    }
 
-      return fetch(url, {
-        ...options,
-        headers: {
-          'X-API-Key': apiKey,
-          'Content-Type': 'application/json',
-          ...(options.headers || {}),
-        },
-      });
+    // Parse API response with better error handling
+    async function parseResponse(response) {
+      const text = await response.text();
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw new Error(text || `HTTP ${response.status}: ${response.statusText}`);
+      }
     }
 
     // Dashboard
     async function loadDashboard() {
-      const days = document.getElementById('daysSelect').value;
+      const dateRange = getDateRange();
       const content = document.getElementById('dashboard-content');
-      content.innerHTML = '<div class="loading">Loading dashboard data</div>';
+      content.innerHTML = '<div class="loading">Connecting to Salesforce and loading dashboard data</div>';
 
       try {
         const [statsRes, dbStatsRes] = await Promise.all([
-          fetchWithAuth(`/api/dashboard/stats?days=${days}`),
-          fetchWithAuth('/api/setup/database-stats')
+          fetchApi(`/api/dashboard/stats?startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`),
+          fetchApi('/api/setup/database-stats')
         ]);
 
-        if (!statsRes.ok) throw new Error('Failed to fetch stats');
+        if (!statsRes.ok) {
+          const errorData = await parseResponse(statsRes);
+          throw new Error(errorData.error || `HTTP ${statsRes.status}: Failed to fetch stats`);
+        }
 
-        const stats = await statsRes.json();
-        const dbStats = dbStatsRes.ok ? await dbStatsRes.json() : null;
+        const stats = await parseResponse(statsRes);
+        const dbStats = dbStatsRes.ok ? await parseResponse(dbStatsRes) : null;
 
-        renderDashboard(stats, dbStats);
+        renderDashboard(stats, dbStats, dateRange);
       } catch (error) {
-        content.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+        console.error('Dashboard load error:', error);
+        content.innerHTML = `<div class="error-message">
+          <strong>Connection Error</strong><br>
+          ${escapeHtml(error.message)}<br><br>
+          <small>Check Setup & Logs tab for more details</small>
+        </div>`;
       }
     }
 
-    function renderDashboard(stats, dbStats) {
+    // Escape HTML to prevent XSS
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function renderDashboard(stats, dbStats, dateRange) {
       const content = document.getElementById('dashboard-content');
+      const dateRangeLabel = `${new Date(dateRange.startDate).toLocaleDateString()} - ${new Date(dateRange.endDate).toLocaleDateString()}`;
 
       content.innerHTML = `
         <div class="stats-grid">
@@ -903,7 +943,7 @@
       resultDiv.innerHTML = '<div class="loading">Looking up lead</div>';
 
       try {
-        const response = await fetchWithAuth(`/api/lead/${leadId}`);
+        const response = await fetchApi(`/api/lead/${leadId}`);
         const data = await response.json();
 
         if (!data.salesforce && !data.localEnrichment) {
@@ -967,7 +1007,7 @@
       resultDiv.innerHTML = '<div class="loading">Running enrichment (this may take 30-60 seconds)</div>';
 
       try {
-        const response = await fetchWithAuth('/api/enrich-by-id', {
+        const response = await fetchApi('/api/enrich-by-id', {
           method: 'POST',
           body: JSON.stringify({
             salesforce_lead_id: leadId,
@@ -1061,7 +1101,7 @@
       selectedLeads.clear();
 
       try {
-        const response = await fetchWithAuth('/api/dashboard/unenriched?limit=100');
+        const response = await fetchApi('/api/dashboard/unenriched?limit=100');
         const data = await response.json();
         renderUnenrichedLeads(data);
       } catch (error) {
@@ -1170,7 +1210,7 @@
       resultsDiv.innerHTML = '<div class="loading">Processing enrichment</div>';
 
       try {
-        const response = await fetchWithAuth('/api/dashboard/enrich-batch', {
+        const response = await fetchApi('/api/dashboard/enrich-batch', {
           method: 'POST',
           body: JSON.stringify({ lead_ids: Array.from(selectedLeads) }),
         });
@@ -1217,12 +1257,17 @@
 
       try {
         const [statusRes, dbStatsRes] = await Promise.all([
-          fetchWithAuth('/api/setup/status'),
-          fetchWithAuth('/api/setup/database-stats')
+          fetchApi('/api/setup/status'),
+          fetchApi('/api/setup/database-stats')
         ]);
 
-        const status = await statusRes.json();
-        const dbStats = dbStatsRes.ok ? await dbStatsRes.json() : null;
+        if (!statusRes.ok) {
+          const errorData = await parseResponse(statusRes);
+          throw new Error(errorData.error || `HTTP ${statusRes.status}: Failed to fetch status`);
+        }
+
+        const status = await parseResponse(statusRes);
+        const dbStats = dbStatsRes.ok ? await parseResponse(dbStatsRes) : null;
 
         content.innerHTML = `
           <div class="config-grid">
@@ -1323,6 +1368,10 @@
             </table>
           </div>
         `;
+
+        // Load saved Workato webhook URL
+        const savedWebhookUrl = localStorage.getItem('tsi_workato_webhook_url') || '';
+        document.getElementById('workatoWebhookUrl').value = savedWebhookUrl;
       } catch (error) {
         content.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
       }
@@ -1346,11 +1395,17 @@
       content.innerHTML = '<div class="loading">Loading logs</div>';
 
       try {
-        const response = await fetchWithAuth(`/api/setup/logs?limit=100${level ? `&level=${level}` : ''}`);
-        const data = await response.json();
+        const response = await fetchApi(`/api/setup/logs?limit=100${level ? `&level=${level}` : ''}`);
 
-        if (data.logs.length === 0) {
-          content.innerHTML = '<div style="padding: 40px; text-align: center; color: #6b7280;">No logs found</div>';
+        if (!response.ok) {
+          const errorData = await parseResponse(response);
+          throw new Error(errorData.error || `HTTP ${response.status}`);
+        }
+
+        const data = await parseResponse(response);
+
+        if (!data.logs || data.logs.length === 0) {
+          content.innerHTML = '<div style="padding: 40px; text-align: center; color: #6b7280;">No logs found. Logs will appear here as the server processes requests.</div>';
           return;
         }
 
@@ -1358,11 +1413,55 @@
           <div class="log-entry">
             <span class="timestamp">${new Date(log.timestamp).toLocaleTimeString()}</span>
             <span class="level ${log.level}">${log.level.toUpperCase()}</span>
-            <span class="message">${log.message}${log.meta ? ` <code style="color: #6b7280;">${JSON.stringify(log.meta)}</code>` : ''}</span>
+            <span class="message">${escapeHtml(log.message)}${log.meta ? ` <code style="color: #6b7280;">${escapeHtml(JSON.stringify(log.meta))}</code>` : ''}</span>
           </div>
         `).join('');
       } catch (error) {
-        content.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+        console.error('Logs load error:', error);
+        content.innerHTML = `<div class="error-message">Error loading logs: ${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    // Workato webhook functions
+    function saveWorkatoWebhook() {
+      const url = document.getElementById('workatoWebhookUrl').value.trim();
+      if (url) {
+        localStorage.setItem('tsi_workato_webhook_url', url);
+        const resultDiv = document.getElementById('webhookTestResult');
+        resultDiv.innerHTML = '<div class="badge success" style="margin-top: 10px;">Webhook URL saved</div>';
+        setTimeout(() => { resultDiv.innerHTML = ''; }, 3000);
+      }
+    }
+
+    async function testWorkatoWebhook() {
+      const url = document.getElementById('workatoWebhookUrl').value.trim();
+      const resultDiv = document.getElementById('webhookTestResult');
+
+      if (!url) {
+        resultDiv.innerHTML = '<div class="badge warning" style="margin-top: 10px;">Please enter a webhook URL first</div>';
+        return;
+      }
+
+      resultDiv.innerHTML = '<div class="loading" style="margin-top: 10px;">Testing webhook...</div>';
+
+      try {
+        // Send a test payload to the webhook
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          mode: 'no-cors', // Workato webhooks may not return CORS headers
+          body: JSON.stringify({
+            test: true,
+            message: 'TSI Fit Score webhook test',
+            timestamp: new Date().toISOString()
+          })
+        });
+
+        // With no-cors mode, we can't read the response, but if no error was thrown, the request was sent
+        resultDiv.innerHTML = '<div class="badge success" style="margin-top: 10px;">Test request sent (check Workato job history)</div>';
+        localStorage.setItem('tsi_workato_webhook_url', url);
+      } catch (error) {
+        resultDiv.innerHTML = `<div class="badge error" style="margin-top: 10px;">Failed to send test: ${error.message}</div>`;
       }
     }
   </script>

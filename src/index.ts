@@ -16,11 +16,32 @@ import { DashboardStatsService } from './services/dashboardStats';
 // Types
 import { EnrichmentData } from './types/lead';
 
-// Logger setup
+// In-memory log storage (circular buffer) - defined early so logs are captured
+const logBuffer: Array<{ timestamp: string; level: string; message: string; meta?: Record<string, unknown> }> = [];
+const MAX_LOG_ENTRIES = 500;
+
+// Custom format to capture logs to buffer
+const captureFormat = winston.format((info) => {
+  const { level, message, timestamp, ...meta } = info;
+  const logEntry = {
+    timestamp: (timestamp as string) || new Date().toISOString(),
+    level: level as string,
+    message: message as string,
+    meta: Object.keys(meta).length > 0 ? meta : undefined,
+  };
+  logBuffer.push(logEntry);
+  if (logBuffer.length > MAX_LOG_ENTRIES) {
+    logBuffer.shift();
+  }
+  return info;
+});
+
+// Logger setup with capture format
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: winston.format.combine(
     winston.format.timestamp(),
+    captureFormat(),
     winston.format.json()
   ),
   transports: [new winston.transports.Console()],
@@ -94,36 +115,6 @@ app.get('/', (_req, res) => {
   res.redirect('/dashboard');
 });
 
-// In-memory log storage (circular buffer)
-const logBuffer: Array<{ timestamp: string; level: string; message: string; meta?: Record<string, unknown> }> = [];
-const MAX_LOG_ENTRIES = 500;
-
-// Add a custom format to capture logs
-const captureFormat = winston.format((info) => {
-  const { level, message, timestamp, ...meta } = info;
-  const logEntry = {
-    timestamp: (timestamp as string) || new Date().toISOString(),
-    level: level as string,
-    message: message as string,
-    meta: Object.keys(meta).length > 0 ? meta : undefined,
-  };
-  logBuffer.push(logEntry);
-  if (logBuffer.length > MAX_LOG_ENTRIES) {
-    logBuffer.shift();
-  }
-  return info;
-});
-
-// Replace logger transport with capture format
-logger.clear();
-logger.add(new winston.transports.Console({
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    captureFormat(),
-    winston.format.json()
-  ),
-}));
-
 // Helper to get Salesforce service
 const getSalesforceService = () => new SalesforceService({
   loginUrl: process.env.SFDC_LOGIN_URL || 'https://login.salesforce.com',
@@ -141,8 +132,8 @@ app.get('/health', (_req, res) => {
 
 // ============ Setup API Endpoints ============
 
-// Get system status and configuration
-app.get('/api/setup/status', authenticateApiKey, async (_req, res) => {
+// Get system status and configuration (no auth - internal dashboard)
+app.get('/api/setup/status', async (_req, res) => {
   try {
     // Check database connection
     let dbStatus = { connected: false, error: '' };
@@ -199,8 +190,8 @@ app.get('/api/setup/status', authenticateApiKey, async (_req, res) => {
   }
 });
 
-// Get recent logs
-app.get('/api/setup/logs', authenticateApiKey, (req, res) => {
+// Get recent logs (no auth - internal dashboard)
+app.get('/api/setup/logs', (req, res) => {
   const limit = Math.min(parseInt(req.query.limit as string) || 100, MAX_LOG_ENTRIES);
   const level = req.query.level as string;
 
@@ -216,8 +207,8 @@ app.get('/api/setup/logs', authenticateApiKey, (req, res) => {
   });
 });
 
-// Test database connection
-app.post('/api/setup/test-database', authenticateApiKey, async (_req, res) => {
+// Test database connection (no auth - internal dashboard)
+app.post('/api/setup/test-database', async (_req, res) => {
   try {
     const result = await pool.query(`
       SELECT
@@ -234,8 +225,8 @@ app.post('/api/setup/test-database', authenticateApiKey, async (_req, res) => {
   }
 });
 
-// Get database stats
-app.get('/api/setup/database-stats', authenticateApiKey, async (_req, res) => {
+// Get database stats (no auth - internal dashboard)
+app.get('/api/setup/database-stats', async (_req, res) => {
   try {
     const enrichmentStats = await pool.query(`
       SELECT
@@ -285,8 +276,8 @@ app.get('/api/setup/database-stats', authenticateApiKey, async (_req, res) => {
 
 // ============ Manual Enrichment API Endpoints ============
 
-// Lookup lead by Salesforce ID
-app.get('/api/lead/:salesforceLeadId', authenticateApiKey, async (req, res) => {
+// Lookup lead by Salesforce ID (no auth - internal dashboard)
+app.get('/api/lead/:salesforceLeadId', async (req, res) => {
   try {
     const { salesforceLeadId } = req.params;
 
@@ -326,8 +317,8 @@ app.get('/api/lead/:salesforceLeadId', authenticateApiKey, async (req, res) => {
   }
 });
 
-// Manual enrichment by Salesforce Lead ID (fetches data from Salesforce first)
-app.post('/api/enrich-by-id', authenticateApiKey, async (req, res) => {
+// Manual enrichment by Salesforce Lead ID (no auth - internal dashboard)
+app.post('/api/enrich-by-id', async (req, res) => {
   const { salesforce_lead_id, update_salesforce = true } = req.body;
 
   if (!salesforce_lead_id) {
@@ -506,22 +497,27 @@ app.post('/api/enrich-by-id', authenticateApiKey, async (req, res) => {
 
 // ============ Dashboard API Endpoints ============
 
-// Dashboard stats
-app.get('/api/dashboard/stats', authenticateApiKey, async (req, res) => {
+// Dashboard stats (no auth - internal dashboard)
+app.get('/api/dashboard/stats', async (req, res) => {
   try {
-    const daysBack = parseInt(req.query.days as string) || 30;
+    const startDate = req.query.startDate as string | undefined;
+    const endDate = req.query.endDate as string | undefined;
+
+    logger.info('Fetching dashboard stats', { startDate, endDate });
+
     const salesforce = getSalesforceService();
     const dashboardService = new DashboardStatsService(salesforce);
-    const stats = await dashboardService.getStats(daysBack);
+    const stats = await dashboardService.getStats(startDate, endDate);
     res.json(stats);
   } catch (error) {
-    logger.error('Failed to fetch dashboard stats', { error });
-    res.status(500).json({ error: 'Failed to fetch dashboard stats' });
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Failed to fetch dashboard stats', { error: errorMessage });
+    res.status(500).json({ error: `Failed to fetch dashboard stats: ${errorMessage}` });
   }
 });
 
-// Get unenriched leads
-app.get('/api/dashboard/unenriched', authenticateApiKey, async (req, res) => {
+// Get unenriched leads (no auth - internal dashboard)
+app.get('/api/dashboard/unenriched', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit as string) || 100;
     const salesforce = getSalesforceService();
@@ -535,8 +531,8 @@ app.get('/api/dashboard/unenriched', authenticateApiKey, async (req, res) => {
   }
 });
 
-// Batch enrich leads and update Salesforce
-app.post('/api/dashboard/enrich-batch', authenticateApiKey, async (req, res) => {
+// Batch enrich leads and update Salesforce (no auth - internal dashboard)
+app.post('/api/dashboard/enrich-batch', async (req, res) => {
   const { lead_ids } = req.body;
 
   if (!Array.isArray(lead_ids) || lead_ids.length === 0) {
@@ -895,5 +891,12 @@ process.on('SIGINT', shutdown);
 // Start server
 const PORT = process.env.PORT || 4900;
 app.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT}`);
+  logger.info(`TSI Fit Score Engine started`, {
+    port: PORT,
+    nodeEnv: process.env.NODE_ENV || 'development',
+    databaseConfigured: !!process.env.DATABASE_URL,
+    salesforceConfigured: !!process.env.SFDC_USERNAME,
+    googlePlacesConfigured: !!process.env.GOOGLE_PLACES_API_KEY,
+    clayConfigured: !!process.env.CLAY_API_KEY,
+  });
 });

@@ -61,12 +61,16 @@ export class DashboardStatsService {
     return distribution;
   }
 
-  async getStats(daysBack: number = 30): Promise<DashboardStats> {
+  async getStats(startDate?: string, endDate?: string): Promise<DashboardStats> {
     await this.salesforce.connect();
 
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - daysBack);
-    const startDateStr = startDate.toISOString().split('T')[0];
+    // Default to this month if no dates provided
+    const now = new Date();
+    const defaultStartDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    const defaultEndDate = now.toISOString().split('T')[0];
+
+    const startDateStr = startDate || defaultStartDate;
+    const endDateStr = endDate || defaultEndDate;
 
     // Query leads with Fit Score fields
     const leadsQuery = `
@@ -74,9 +78,9 @@ export class DashboardStatsService {
              Fit_Score__c, Fit_Tier__c, Enrichment_Status__c,
              Employee_Estimate__c, Years_In_Business__c,
              Google_Reviews_Count__c, Has_Website__c,
-             Pixels_Detected__c, Fit_Score_Timestamp__c
+             Pixels_Detected__c, Fit_Score_Timestamp__c, CreatedDate
       FROM Lead
-      WHERE CreatedDate >= ${startDateStr}
+      WHERE CreatedDate >= ${startDateStr} AND CreatedDate <= ${endDateStr}T23:59:59Z
     `;
 
     const result = await this.salesforce.query(leadsQuery);
