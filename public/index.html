@@ -1039,30 +1039,20 @@
       if (!ctx) return;
       if (scoreChart) scoreChart.destroy();
 
-      // Sort by score value for proper ordering
-      const sortedDistribution = [...distribution].sort((a, b) => {
-        const scoreA = parseInt(a.score.toString().split('-')[0]) || 0;
-        const scoreB = parseInt(b.score.toString().split('-')[0]) || 0;
-        return scoreA - scoreB;
-      });
+      // Sort by score value (0-5)
+      const sortedDistribution = [...distribution].sort((a, b) => a.score - b.score);
 
       // Color gradient from red (low scores) to green (high scores)
-      const getColor = (score) => {
-        const numScore = parseInt(score.toString().split('-')[0]) || 0;
-        if (numScore >= 80) return '#22c55e'; // Green
-        if (numScore >= 60) return '#84cc16'; // Lime
-        if (numScore >= 40) return '#f97316'; // Orange
-        return '#ef4444'; // Red
-      };
+      const colors = ['#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#10b981'];
 
       scoreChart = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: sortedDistribution.map(d => `Score ${d.score}`),
+          labels: sortedDistribution.map(d => d.score.toString()),
           datasets: [{
-            label: 'Leads',
+            label: 'Total Leads',
             data: sortedDistribution.map(d => d.count),
-            backgroundColor: sortedDistribution.map(d => getColor(d.score)),
+            backgroundColor: sortedDistribution.map((d, i) => colors[i] || '#4f46e5'),
             borderRadius: 6,
           }]
         },
@@ -1078,7 +1068,7 @@
             },
             x: {
               grid: { display: false },
-              title: { display: true, text: 'Fit Score' }
+              title: { display: true, text: 'Score' }
             }
           }
         }

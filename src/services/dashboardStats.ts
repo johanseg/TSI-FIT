@@ -46,31 +46,28 @@ export class DashboardStatsService {
     this.salesforce = salesforce;
   }
 
-  // Calculate score distribution for leads (group by individual scores)
+  // Calculate score distribution for leads (group by Score__c values 0-5)
   private calculateScoreDistribution(leads: any[]): ScoreDistribution[] {
-    const scoreMap = new Map<number, number>();
+    // Initialize 6 buckets for scores 0, 1, 2, 3, 4, 5
+    const buckets = [0, 0, 0, 0, 0, 0];
 
-    // Get score for each lead
+    // Count leads by their Score__c value (0-5)
     for (const lead of leads) {
-      const score = lead.Fit_Score__c;
-      if (score !== null && score !== undefined) {
-        // Round to nearest integer for grouping
-        const roundedScore = Math.round(score);
-        scoreMap.set(roundedScore, (scoreMap.get(roundedScore) || 0) + 1);
+      const score = lead.Score__c;
+      if (score !== null && score !== undefined && score >= 0 && score <= 5) {
+        buckets[Math.round(score)]++;
       }
     }
 
-    const total = Array.from(scoreMap.values()).reduce((sum, count) => sum + count, 0);
+    const total = buckets.reduce((sum, count) => sum + count, 0);
     const distribution: ScoreDistribution[] = [];
 
-    // Sort by score and create distribution entries
-    const sortedScores = Array.from(scoreMap.keys()).sort((a, b) => a - b);
-    for (const score of sortedScores) {
-      const count = scoreMap.get(score) || 0;
+    // Create distribution entries for scores 0-5
+    for (let i = 0; i <= 5; i++) {
       distribution.push({
-        score,
-        count,
-        percentage: total > 0 ? (count / total) * 100 : 0,
+        score: i,
+        count: buckets[i],
+        percentage: total > 0 ? (buckets[i] / total) * 100 : 0,
       });
     }
 
@@ -102,9 +99,10 @@ export class DashboardStatsService {
 
     try {
       // First try: Query with Fit Score output fields (what we write to SF after enrichment)
+      // Score__c is the 0-5 score used for distribution chart
       const leadsQuery = `
         SELECT Id, Company, LeadSource, Website, Phone, City, State,
-               Fit_Score__c, Enrichment_Status__c,
+               Fit_Score__c, Score__c, Enrichment_Status__c,
                Employee_Estimate__c, Years_In_Business__c,
                Google_Reviews_Count__c, Has_Website__c,
                Pixels_Detected__c, Fit_Score_Timestamp__c, CreatedDate
@@ -121,7 +119,7 @@ export class DashboardStatsService {
           // Second try: Query with existing Salesforce INPUT fields (from SALESFORCE_SCHEMA.md)
           const existingFieldsQuery = `
             SELECT Id, Company, LeadSource, Website, Phone, City, State,
-                   Fit_Score__c, Has_Website__c, Has_GMB__c, GMB_URL__c,
+                   Fit_Score__c, Score__c, Has_Website__c, Has_GMB__c, GMB_URL__c,
                    Number_of_Employees__c, Number_of_GBP_Reviews__c,
                    Number_of_Years_in_Business__c, Location_Type__c,
                    Business_License__c, Spending_on_Marketing__c,
