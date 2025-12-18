@@ -35,6 +35,8 @@ export interface UnenrichedLead {
   phone: string | null;
   city: string | null;
   state: string | null;
+  street: string | null;
+  postalCode: string | null;
   leadSource: string | null;
   createdDate: string;
 }
@@ -234,6 +236,8 @@ export class DashboardStatsService {
       phone: lead.Phone || null,
       city: lead.City || null,
       state: lead.State || null,
+      street: lead.Street || null,
+      postalCode: lead.PostalCode || null,
       leadSource: lead.LeadSource || null,
       createdDate: lead.CreatedDate,
     }));
@@ -254,7 +258,7 @@ export class DashboardStatsService {
 
       // Get paginated results
       const query = `
-        SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
+        SELECT Id, Company, Website, Phone, City, State, Street, PostalCode, LeadSource, CreatedDate
         FROM Lead
         WHERE Score__c = null
           AND Company != null
@@ -278,7 +282,7 @@ export class DashboardStatsService {
         const totalCount = (countResult.records as any[])[0]?.cnt || 0;
 
         const query = `
-          SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
+          SELECT Id, Company, Website, Phone, City, State, Street, PostalCode, LeadSource, CreatedDate
           FROM Lead
           WHERE Company != null
             AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}

@@ -357,7 +357,7 @@ app.post('/api/enrich-by-id', async (req, res) => {
     // Fetch lead data from Salesforce
     const salesforce = getSalesforceService();
     const query = `
-      SELECT Id, Company, Website, Phone, City, State, LeadSource, FirstName, LastName, Email
+      SELECT Id, Company, Website, Phone, City, State, Street, PostalCode, LeadSource, FirstName, LastName, Email
       FROM Lead
       WHERE Id = '${salesforce_lead_id}'
     `;
@@ -369,8 +369,8 @@ app.post('/api/enrich-by-id', async (req, res) => {
 
     const lead = result.records[0] as {
       Id: string; Company: string; Website?: string; Phone?: string;
-      City?: string; State?: string; LeadSource?: string;
-      FirstName?: string; LastName?: string; Email?: string;
+      City?: string; State?: string; Street?: string; PostalCode?: string;
+      LeadSource?: string; FirstName?: string; LastName?: string; Email?: string;
     };
 
     const enrichmentData: EnrichmentData = {};
@@ -381,7 +381,7 @@ app.post('/api/enrich-by-id', async (req, res) => {
     const websiteTech = new WebsiteTechService();
 
     try {
-      // Step 1: Google Places enrichment (first priority - use website/phone/business)
+      // Step 1: Google Places enrichment (first priority - use all available data for matching)
       try {
         logger.info('Enriching with Google Places', { requestId, businessName: lead.Company });
         const googlePlacesData = await googlePlaces.enrich(
@@ -389,7 +389,9 @@ app.post('/api/enrich-by-id', async (req, res) => {
           lead.Phone,
           lead.City,
           lead.State,
-          lead.Website // Include website for better matching
+          lead.Website,
+          lead.Street,
+          lead.PostalCode
         );
         if (googlePlacesData) {
           enrichmentData.google_places = googlePlacesData;
@@ -645,14 +647,16 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
       const websiteTech = new WebsiteTechService();
 
       try {
-        // Step 1: Google Places enrichment (first priority)
+        // Step 1: Google Places enrichment (first priority - use all available data)
         try {
           const googlePlacesData = await googlePlaces.enrich(
             lead.company,
             lead.phone || undefined,
             lead.city || undefined,
             lead.state || undefined,
-            lead.website || undefined
+            lead.website || undefined,
+            lead.street || undefined,
+            lead.postalCode || undefined
           );
           if (googlePlacesData) {
             enrichmentData.google_places = googlePlacesData;
