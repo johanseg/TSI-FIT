@@ -12,7 +12,7 @@ import { WebsiteTechService } from './services/websiteTech';
 import { calculateFitScore } from './services/fitScore';
 import { SalesforceService } from './services/salesforce';
 import { DashboardStatsService } from './services/dashboardStats';
-import { mapToSalesforceFields, formatForSalesforceUpdate, getFilledFieldsFromGMB } from './services/salesforceFieldMapper';
+import { mapToSalesforceFields, formatForSalesforceUpdate, getFilledFieldsFromGMB, mapGMBTypesToVertical } from './services/salesforceFieldMapper';
 
 // Types
 import { EnrichmentData, SalesforceEnrichmentFields } from './types/lead';
@@ -453,13 +453,14 @@ app.post('/api/enrich-by-id', async (req, res) => {
       let salesforceUpdated = false;
       if (update_salesforce) {
         try {
-          // Update with both fit score and SF-aligned fields (including GMB-filled fields)
+          // Update with SF-aligned fields (GMB/Clay data is authoritative and overwrites existing)
           const sfUpdateFields = formatForSalesforceUpdate(
             sfFields,
             lead.Website,
             lead.Phone,
             filledFromGMB,
-            fitScoreResult.fit_score
+            fitScoreResult.fit_score,
+            enrichmentData.google_places?.gmb_types
           );
           salesforceUpdated = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult, sfUpdateFields);
 
@@ -701,14 +702,15 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
         // Step 4: Calculate Fit Score
         const fitScoreResult = calculateFitScore(enrichmentData);
 
-        // Step 5: Map to Salesforce-aligned fields (including GMB-filled fields)
+        // Step 5: Map to Salesforce-aligned fields (GMB/Clay data is authoritative and overwrites existing)
         const sfFields = mapToSalesforceFields(enrichmentData, websiteForTech);
         const sfUpdateFields = formatForSalesforceUpdate(
           sfFields,
           lead.website || undefined,
           lead.phone || undefined,
           filledFromGMB,
-          fitScoreResult.fit_score
+          fitScoreResult.fit_score,
+          enrichmentData.google_places?.gmb_types
         );
 
         // Step 6: Update Salesforce
@@ -958,17 +960,18 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
         score_breakdown: JSON.stringify(fitScoreResult.score_breakdown),
         enrichment_timestamp: new Date().toISOString(),
         request_id: requestId,
-        // Fields filled from GMB data (when missing from original lead)
-        filled_from_gmb: filledFromGMB,
+        // Fields from GMB data (authoritative - overwrites existing Salesforce data)
+        gmb_data: filledFromGMB,
         // Salesforce-aligned fields (map directly to SF custom fields)
         // Workato should use these values to update the Lead record
+        // GMB data is authoritative and will overwrite existing Salesforce values
         salesforce_fields: {
-          // Standard Lead fields (use original or GMB-filled values)
-          Website: payload.website || filledFromGMB.website || null,
-          Phone: payload.phone || filledFromGMB.phone || null,
+          // Standard Lead fields (GMB is authoritative, prefer GMB over original)
+          Website: filledFromGMB.website || payload.website || null,
+          Phone: filledFromGMB.phone || payload.phone || null,
           Street: filledFromGMB.address || null,
-          City: payload.city || filledFromGMB.city || null,
-          State: payload.state || filledFromGMB.state || null,
+          City: filledFromGMB.city || payload.city || null,
+          State: filledFromGMB.state || payload.state || null,
           PostalCode: filledFromGMB.zip || null,
           // Custom fields
           Has_Website__c: sfFields.has_website,
@@ -980,6 +983,8 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
           Location_Type__c: sfFields.location_type,
           Business_License__c: sfFields.business_license,
           Spending_on_Marketing__c: sfFields.spending_on_marketing,
+          // Lead_Vertical__c - mapped from GMB types (only set if determined)
+          Lead_Vertical__c: mapGMBTypesToVertical(enrichmentData.google_places?.gmb_types),
         },
       };
 

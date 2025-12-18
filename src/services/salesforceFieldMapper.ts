@@ -186,6 +186,251 @@ function mapLocationType(
   return null;
 }
 
+// Lead_Vertical__c picklist values from Salesforce
+export type LeadVerticalPicklist =
+  | 'Appliance Repair' | 'Arborists & Tree Removal' | 'Art & Photography' | 'Automotive'
+  | 'Bail Bonds' | 'Beauty & Cosmetic' | 'Cabinets & Countertops' | 'Carpet Cleaning'
+  | 'Chiropractors, Acupuncture & Massage' | 'Cleaning Services' | 'Commercial Contractors'
+  | 'Computers & Technology' | 'Concrete & Masonry' | 'Custom Home Builders' | 'Damage Restoration'
+  | 'Decks & Patios' | 'Dental' | 'Doctors' | 'Doors & Windows' | 'Electricians'
+  | 'Entertainment & Music' | 'Fences' | 'Finance & Accounting' | 'Flooring' | 'Furniture'
+  | 'Garage Doors' | 'General Contractor' | 'Government & Community' | 'Gyms & Fitness'
+  | 'Handymen' | 'Home Entertainment & Automation' | 'Home Health Care' | 'Home Inspection'
+  | 'Home Remodeling & Additions' | 'Home Security' | 'HVAC' | 'Insulation' | 'Insurance'
+  | 'Junk Removal' | 'Landscaping' | 'Legal' | 'Lodging & Travel' | 'Logistics & Transportation'
+  | 'Med Spas' | 'Moving & Storage' | 'Non-profit' | 'Nutrition & Fitness' | 'Other Blue Collar'
+  | 'Other SMB' | 'Other White Collar' | 'Painting' | 'Pest Control' | 'Physical Therapy'
+  | 'Plastic Surgery' | 'Plumbing' | 'Pools' | 'Pressure Washing' | 'Private Investigators'
+  | 'Religious' | 'Restaurants, Food & Beverages' | 'Retail & Specialty Shops' | 'Road Side Assistance'
+  | 'Roofing' | 'Salons & Beauty' | 'Siding' | 'Signs, Graphics & Print Materials' | 'Solar'
+  | 'Sports & Outdoors' | 'Tattoo Parlors' | 'Therapists' | 'Towing' | 'Transportation'
+  | 'Veterinary & Pets';
+
+/**
+ * Map GMB types to Lead_Vertical__c picklist value
+ * Returns null if no matching vertical found
+ */
+export function mapGMBTypesToVertical(gmbTypes?: string[]): LeadVerticalPicklist | null {
+  if (!gmbTypes || gmbTypes.length === 0) {
+    return null;
+  }
+
+  // Normalize types to lowercase for matching
+  const types = gmbTypes.map(t => t.toLowerCase());
+
+  // GMB type keywords -> Salesforce Lead_Vertical__c mapping
+  // Order matters - more specific matches should come first
+  const typeMapping: Array<{ keywords: string[]; vertical: LeadVerticalPicklist }> = [
+    // Roofing
+    { keywords: ['roofing', 'roofer'], vertical: 'Roofing' },
+
+    // Plumbing
+    { keywords: ['plumber', 'plumbing'], vertical: 'Plumbing' },
+
+    // HVAC
+    { keywords: ['hvac', 'heating', 'air_conditioning', 'furnace'], vertical: 'HVAC' },
+
+    // Electricians
+    { keywords: ['electrician', 'electrical'], vertical: 'Electricians' },
+
+    // Tree Services
+    { keywords: ['tree', 'arborist', 'tree_service'], vertical: 'Arborists & Tree Removal' },
+
+    // Landscaping
+    { keywords: ['landscap', 'lawn', 'garden'], vertical: 'Landscaping' },
+
+    // Painting
+    { keywords: ['painter', 'painting'], vertical: 'Painting' },
+
+    // Pest Control
+    { keywords: ['pest', 'exterminator', 'termite'], vertical: 'Pest Control' },
+
+    // Cleaning Services
+    { keywords: ['cleaning', 'maid', 'janitorial', 'house_cleaning'], vertical: 'Cleaning Services' },
+
+    // Carpet Cleaning
+    { keywords: ['carpet_clean'], vertical: 'Carpet Cleaning' },
+
+    // Garage Doors
+    { keywords: ['garage_door'], vertical: 'Garage Doors' },
+
+    // Fences
+    { keywords: ['fence', 'fencing'], vertical: 'Fences' },
+
+    // Concrete & Masonry
+    { keywords: ['concrete', 'masonry', 'mason', 'cement', 'paving'], vertical: 'Concrete & Masonry' },
+
+    // Flooring
+    { keywords: ['flooring', 'floor', 'hardwood', 'tile_contractor'], vertical: 'Flooring' },
+
+    // Doors & Windows
+    { keywords: ['window', 'door_supplier', 'glass'], vertical: 'Doors & Windows' },
+
+    // Decks & Patios
+    { keywords: ['deck', 'patio'], vertical: 'Decks & Patios' },
+
+    // Siding
+    { keywords: ['siding'], vertical: 'Siding' },
+
+    // Home Remodeling
+    { keywords: ['remodel', 'renovation', 'home_improvement', 'kitchen_remodel', 'bathroom_remodel'], vertical: 'Home Remodeling & Additions' },
+
+    // General Contractor
+    { keywords: ['general_contractor', 'contractor', 'construction'], vertical: 'General Contractor' },
+
+    // Custom Home Builders
+    { keywords: ['home_builder', 'custom_home'], vertical: 'Custom Home Builders' },
+
+    // Pools
+    { keywords: ['pool', 'swimming_pool', 'hot_tub', 'spa_contractor'], vertical: 'Pools' },
+
+    // Solar
+    { keywords: ['solar'], vertical: 'Solar' },
+
+    // Insulation
+    { keywords: ['insulation'], vertical: 'Insulation' },
+
+    // Damage Restoration
+    { keywords: ['restoration', 'water_damage', 'fire_damage', 'mold'], vertical: 'Damage Restoration' },
+
+    // Appliance Repair
+    { keywords: ['appliance_repair', 'appliance'], vertical: 'Appliance Repair' },
+
+    // Handymen
+    { keywords: ['handyman'], vertical: 'Handymen' },
+
+    // Junk Removal
+    { keywords: ['junk', 'hauling', 'debris'], vertical: 'Junk Removal' },
+
+    // Moving & Storage
+    { keywords: ['moving', 'mover', 'storage'], vertical: 'Moving & Storage' },
+
+    // Pressure Washing
+    { keywords: ['pressure_wash', 'power_wash'], vertical: 'Pressure Washing' },
+
+    // Home Inspection
+    { keywords: ['home_inspection', 'inspector'], vertical: 'Home Inspection' },
+
+    // Home Security
+    { keywords: ['security_system', 'alarm', 'locksmith'], vertical: 'Home Security' },
+
+    // Towing
+    { keywords: ['towing', 'tow_truck'], vertical: 'Towing' },
+
+    // Road Side Assistance
+    { keywords: ['roadside', 'emergency_road'], vertical: 'Road Side Assistance' },
+
+    // Automotive
+    { keywords: ['auto', 'car_repair', 'car_dealer', 'mechanic', 'auto_body', 'tire', 'oil_change'], vertical: 'Automotive' },
+
+    // Legal
+    { keywords: ['lawyer', 'attorney', 'law_firm', 'legal'], vertical: 'Legal' },
+
+    // Dental
+    { keywords: ['dentist', 'dental', 'orthodont'], vertical: 'Dental' },
+
+    // Doctors
+    { keywords: ['doctor', 'physician', 'medical', 'clinic', 'family_practice', 'primary_care'], vertical: 'Doctors' },
+
+    // Chiropractors
+    { keywords: ['chiropract', 'acupunctur', 'massage_therapist', 'massage'], vertical: 'Chiropractors, Acupuncture & Massage' },
+
+    // Physical Therapy
+    { keywords: ['physical_therap', 'physiotherap', 'rehab'], vertical: 'Physical Therapy' },
+
+    // Plastic Surgery
+    { keywords: ['plastic_surg', 'cosmetic_surg'], vertical: 'Plastic Surgery' },
+
+    // Med Spas
+    { keywords: ['med_spa', 'medical_spa', 'medspa'], vertical: 'Med Spas' },
+
+    // Therapists
+    { keywords: ['therapist', 'counselor', 'psycholog', 'mental_health'], vertical: 'Therapists' },
+
+    // Veterinary & Pets
+    { keywords: ['veterinar', 'vet', 'pet', 'animal_hospital', 'dog', 'cat', 'grooming'], vertical: 'Veterinary & Pets' },
+
+    // Salons & Beauty
+    { keywords: ['salon', 'beauty', 'hair', 'nail', 'barber', 'spa'], vertical: 'Salons & Beauty' },
+
+    // Gyms & Fitness
+    { keywords: ['gym', 'fitness', 'yoga', 'pilates', 'crossfit', 'personal_train'], vertical: 'Gyms & Fitness' },
+
+    // Restaurants, Food & Beverages
+    { keywords: ['restaurant', 'cafe', 'coffee', 'bakery', 'bar', 'food', 'catering', 'pizza', 'meal'], vertical: 'Restaurants, Food & Beverages' },
+
+    // Retail & Specialty Shops
+    { keywords: ['store', 'shop', 'retail', 'boutique'], vertical: 'Retail & Specialty Shops' },
+
+    // Insurance
+    { keywords: ['insurance'], vertical: 'Insurance' },
+
+    // Finance & Accounting
+    { keywords: ['accountant', 'accounting', 'tax', 'financial', 'cpa', 'bookkeep'], vertical: 'Finance & Accounting' },
+
+    // Real Estate (maps to Other White Collar)
+    { keywords: ['real_estate', 'realtor', 'property'], vertical: 'Other White Collar' },
+
+    // Photography
+    { keywords: ['photograph', 'photo_studio'], vertical: 'Art & Photography' },
+
+    // Entertainment & Music
+    { keywords: ['entertainment', 'music', 'dj', 'event'], vertical: 'Entertainment & Music' },
+
+    // Lodging & Travel
+    { keywords: ['hotel', 'motel', 'lodging', 'travel', 'vacation'], vertical: 'Lodging & Travel' },
+
+    // Tattoo Parlors
+    { keywords: ['tattoo', 'piercing'], vertical: 'Tattoo Parlors' },
+
+    // Signs, Graphics & Print
+    { keywords: ['sign', 'printing', 'graphic'], vertical: 'Signs, Graphics & Print Materials' },
+
+    // Computers & Technology
+    { keywords: ['computer', 'it_service', 'tech_support', 'software'], vertical: 'Computers & Technology' },
+
+    // Furniture
+    { keywords: ['furniture'], vertical: 'Furniture' },
+
+    // Cabinets & Countertops
+    { keywords: ['cabinet', 'countertop', 'granite', 'marble'], vertical: 'Cabinets & Countertops' },
+
+    // Home Entertainment & Automation
+    { keywords: ['home_theater', 'home_automation', 'smart_home'], vertical: 'Home Entertainment & Automation' },
+
+    // Home Health Care
+    { keywords: ['home_health', 'home_care', 'senior_care', 'nursing'], vertical: 'Home Health Care' },
+
+    // Private Investigators
+    { keywords: ['investigator', 'detective'], vertical: 'Private Investigators' },
+
+    // Religious
+    { keywords: ['church', 'religious', 'worship', 'temple', 'mosque', 'synagogue'], vertical: 'Religious' },
+
+    // Non-profit
+    { keywords: ['non_profit', 'nonprofit', 'charity', 'foundation'], vertical: 'Non-profit' },
+
+    // Bail Bonds
+    { keywords: ['bail_bond'], vertical: 'Bail Bonds' },
+
+    // Sports & Outdoors
+    { keywords: ['sport', 'outdoor', 'recreation', 'golf', 'tennis', 'hunting', 'fishing'], vertical: 'Sports & Outdoors' },
+  ];
+
+  // Check each mapping
+  for (const mapping of typeMapping) {
+    for (const type of types) {
+      for (const keyword of mapping.keywords) {
+        if (type.includes(keyword)) {
+          return mapping.vertical;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 /**
  * Determine if business is spending on marketing
  * Criteria: domain age > 2 years AND has advertising pixels (Meta, Google Ads, TikTok)
@@ -208,7 +453,8 @@ function determineSpendingOnMarketing(
 }
 
 /**
- * Fields that can be filled from GMB data when missing from the lead
+ * Fields from GMB data to update in Salesforce
+ * These will overwrite existing Salesforce data if GMB has values
  */
 export interface GMBFilledFields {
   website?: string;
@@ -220,12 +466,12 @@ export interface GMBFilledFields {
 }
 
 /**
- * Get fields that can be filled from GMB data
- * Only returns values for fields that are missing from the original lead
+ * Get fields from GMB data to update in Salesforce
+ * GMB data is considered authoritative and will overwrite existing Salesforce values
  */
 export function getFilledFieldsFromGMB(
   googlePlaces: GooglePlacesData | undefined,
-  originalLead: {
+  _originalLead: {
     website?: string;
     phone?: string;
     address?: string;
@@ -240,33 +486,28 @@ export function getFilledFieldsFromGMB(
     return filled;
   }
 
-  // Fill website if missing
-  if (!originalLead.website && googlePlaces.gmb_website) {
+  // Always use GMB data if available (overwrites existing Salesforce data)
+  if (googlePlaces.gmb_website) {
     filled.website = googlePlaces.gmb_website;
   }
 
-  // Fill phone if missing
-  if (!originalLead.phone && googlePlaces.gmb_phone) {
+  if (googlePlaces.gmb_phone) {
     filled.phone = googlePlaces.gmb_phone;
   }
 
-  // Fill address if missing
-  if (!originalLead.address && googlePlaces.gmb_address) {
+  if (googlePlaces.gmb_address) {
     filled.address = googlePlaces.gmb_address;
   }
 
-  // Fill city if missing
-  if (!originalLead.city && googlePlaces.gmb_city) {
+  if (googlePlaces.gmb_city) {
     filled.city = googlePlaces.gmb_city;
   }
 
-  // Fill state if missing
-  if (!originalLead.state && googlePlaces.gmb_state) {
+  if (googlePlaces.gmb_state) {
     filled.state = googlePlaces.gmb_state;
   }
 
-  // Fill zip if missing
-  if (!originalLead.zip && googlePlaces.gmb_zip) {
+  if (googlePlaces.gmb_zip) {
     filled.zip = googlePlaces.gmb_zip;
   }
 
@@ -276,14 +517,15 @@ export function getFilledFieldsFromGMB(
 /**
  * Format Salesforce fields for API response
  * Includes both custom fields (__c) and standard Lead fields (Website, Phone, etc.)
- * Fills in missing fields from GMB data
+ * GMB/Clay data is authoritative and will overwrite existing Salesforce values
  */
 export function formatForSalesforceUpdate(
   fields: SalesforceEnrichmentFields,
   website?: string,
   phone?: string,
   filledFromGMB?: GMBFilledFields,
-  fitScore?: number
+  _fitScore?: number,
+  gmbTypes?: string[]
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {
     Has_Website__c: fields.has_website,
@@ -297,16 +539,22 @@ export function formatForSalesforceUpdate(
     Spending_on_Marketing__c: fields.spending_on_marketing,
   };
 
-  // Add Fit Score if provided
-  if (fitScore !== undefined && fitScore !== null) {
-    result.Fit_Score__c = fitScore;
-    result.Fit_Score_Timestamp__c = new Date().toISOString();
-    result.Enrichment_Status__c = 'success';
+  // Note: We don't update Score__c - it's read-only (used to identify if lead was scored)
+  // The fit score is calculated but not written to Salesforce via this field
+
+  // Always overwrite Lead_Vertical__c from GMB types if we can determine it
+  // GMB data is considered authoritative
+  if (gmbTypes && gmbTypes.length > 0) {
+    const mappedVertical = mapGMBTypesToVertical(gmbTypes);
+    if (mappedVertical) {
+      result.Lead_Vertical__c = mappedVertical;
+    }
   }
 
-  // Use original values or GMB-filled values for standard Lead fields
-  const finalWebsite = website || filledFromGMB?.website;
-  const finalPhone = phone || filledFromGMB?.phone;
+  // GMB data is authoritative - prefer GMB values over existing Salesforce data
+  // If GMB has a value, use it; otherwise keep original Salesforce value
+  const finalWebsite = filledFromGMB?.website || website;
+  const finalPhone = filledFromGMB?.phone || phone;
 
   if (finalWebsite) {
     result.Website = finalWebsite;
@@ -315,7 +563,7 @@ export function formatForSalesforceUpdate(
     result.Phone = finalPhone;
   }
 
-  // Include address fields if filled from GMB
+  // Always update address fields from GMB if available (GMB is authoritative)
   if (filledFromGMB?.address) {
     result.Street = filledFromGMB.address;
   }

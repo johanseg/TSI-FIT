@@ -98,11 +98,8 @@ export class SalesforceService {
         });
       }
 
-      // Add optional pixel/marketing tracking fields if they exist in SF schema
-      if (websiteTech) {
-        updateData.Pixels_Detected__c = this.formatPixelsDetected(websiteTech);
-        updateData.Marketing_Tools__c = this.formatMarketingTools(websiteTech);
-      }
+      // Note: Pixels_Detected__c and Marketing_Tools__c fields don't exist in SF schema
+      // Website tech data is used for fit score calculation but not stored separately in SF
 
       // Skip update if no fields to update
       if (Object.keys(updateData).length === 0) {
@@ -110,10 +107,28 @@ export class SalesforceService {
         return true;
       }
 
-      await this.connection!.sobject('Lead').update({
+      // Log the data we're about to send
+      logger.info('Attempting Salesforce Lead update', {
+        leadId: salesforceLeadId,
+        updateData: updateData,
+      });
+
+      const result = await this.connection!.sobject('Lead').update({
         Id: salesforceLeadId,
         ...updateData,
       });
+
+      // jsforce returns an object with success: boolean and errors array
+      const updateResult = result as { success: boolean; errors?: Array<{ message: string; statusCode: string }> };
+
+      if (!updateResult.success) {
+        logger.error('Salesforce Lead update returned failure', {
+          leadId: salesforceLeadId,
+          errors: updateResult.errors,
+          attemptedFields: Object.keys(updateData),
+        });
+        return false;
+      }
 
       logger.info('Salesforce Lead updated successfully', {
         leadId: salesforceLeadId,
