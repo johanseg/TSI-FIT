@@ -1168,7 +1168,7 @@
                 <div class="result-item"><div class="label">Location</div><div class="value">${[data.salesforce.City, data.salesforce.State].filter(Boolean).join(', ') || '-'}</div></div>
                 <div class="result-item"><div class="label">Lead Source</div><div class="value">${data.salesforce.LeadSource || '-'}</div></div>
                 <div class="result-item"><div class="label">Status</div><div class="value">${data.salesforce.Status || '-'}</div></div>
-                ${data.salesforce.Fit_Score__c ? `<div class="result-item"><div class="label">Current Fit Score</div><div class="value">${data.salesforce.Fit_Score__c}</div></div>` : ''}
+                ${data.salesforce.Score__c !== null && data.salesforce.Score__c !== undefined ? `<div class="result-item"><div class="label">Current Score</div><div class="value">${data.salesforce.Score__c}</div></div>` : ''}
               </div>
             </div>
           `;

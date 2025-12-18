@@ -316,8 +316,9 @@ app.get('/api/lead/:salesforceLeadId', async (req, res) => {
       const query = `
         SELECT Id, Company, Website, Phone, City, State, LeadSource,
                FirstName, LastName, Email, Status, CreatedDate,
-               Fit_Score__c, Enrichment_Status__c,
-               Employee_Estimate__c, Years_In_Business__c, Google_Reviews_Count__c
+               Score__c, Has_Website__c, Has_GMB__c, GMB_URL__c,
+               Number_of_Employees__c, Number_of_GBP_Reviews__c,
+               Number_of_Years_in_Business__c, Location_Type__c
         FROM Lead
         WHERE Id = '${salesforceLeadId}'
       `;
