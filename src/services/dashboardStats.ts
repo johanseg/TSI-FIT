@@ -156,15 +156,15 @@ export class DashboardStatsService {
     const totalLeads = leads.length;
 
     // Helper to check if a lead is "enriched"
-    // A lead is enriched if it has a Fit_Score__c value set
+    // A lead is enriched if it has a Score__c value set (0-5 scale)
     const isEnriched = (lead: any): boolean => {
-      return lead.Fit_Score__c !== undefined && lead.Fit_Score__c !== null;
+      return lead.Score__c !== undefined && lead.Score__c !== null;
     };
 
-    // Get score value from lead
+    // Get score value from lead (Score__c is 0-5)
     const getScore = (lead: any): number | null => {
-      if (lead.Fit_Score__c !== undefined && lead.Fit_Score__c !== null) {
-        return lead.Fit_Score__c;
+      if (lead.Score__c !== undefined && lead.Score__c !== null) {
+        return lead.Score__c;
       }
       return null;
     };
@@ -260,14 +260,14 @@ export class DashboardStatsService {
       createdDate: lead.CreatedDate,
     }));
 
-    // Try with Fit_Score__c first, then fallback to no custom fields
+    // Try with Score__c first, then fallback to no custom fields
     try {
-      // First try: Fit_Score__c (the enrichment score field)
+      // First try: Score__c (the 0-5 enrichment score field)
       // Get total count first
       const countQuery = `
         SELECT COUNT(Id) cnt
         FROM Lead
-        WHERE Fit_Score__c = null
+        WHERE Score__c = null
           AND Company != null
           AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
       `;
@@ -278,7 +278,7 @@ export class DashboardStatsService {
       const query = `
         SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
         FROM Lead
-        WHERE Fit_Score__c = null
+        WHERE Score__c = null
           AND Company != null
           AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
         ORDER BY CreatedDate DESC
@@ -328,7 +328,7 @@ export class DashboardStatsService {
       const query = `
         SELECT COUNT(Id) cnt
         FROM Lead
-        WHERE Fit_Score__c = null
+        WHERE Score__c = null
           AND Company != null
       `;
       const result = await this.salesforce.query(query);
