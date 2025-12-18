@@ -299,8 +299,13 @@ app.get('/api/lead/:salesforceLeadId', async (req, res) => {
     const { salesforceLeadId } = req.params;
 
     // First check local database for existing enrichment
+    // Join with leads table since lead_enrichments.lead_id is a UUID foreign key,
+    // but we're looking up by Salesforce Lead ID
     const localResult = await pool.query(
-      `SELECT * FROM lead_enrichments WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      `SELECT le.* FROM lead_enrichments le
+       JOIN leads l ON le.lead_id = l.id
+       WHERE l.salesforce_lead_id = $1
+       ORDER BY le.created_at DESC LIMIT 1`,
       [salesforceLeadId]
     );
 
