@@ -960,15 +960,15 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
         score_breakdown: JSON.stringify(fitScoreResult.score_breakdown),
         enrichment_timestamp: new Date().toISOString(),
         request_id: requestId,
-        // Fields from GMB data (authoritative - overwrites existing Salesforce data)
+        // Fields from GMB data (for reference - does not include phone)
         gmb_data: filledFromGMB,
         // Salesforce-aligned fields (map directly to SF custom fields)
         // Workato should use these values to update the Lead record
-        // GMB data is authoritative and will overwrite existing Salesforce values
+        // Note: Phone is intentionally NOT included - preserve original lead phone
         salesforce_fields: {
-          // Standard Lead fields (GMB is authoritative, prefer GMB over original)
+          // Standard Lead fields (website from GMB, but NOT phone)
           Website: filledFromGMB.website || payload.website || null,
-          Phone: filledFromGMB.phone || payload.phone || null,
+          // Phone is intentionally NOT updated - preserve original lead phone number
           Street: filledFromGMB.address || null,
           City: filledFromGMB.city || payload.city || null,
           State: filledFromGMB.state || payload.state || null,

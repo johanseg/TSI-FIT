@@ -467,7 +467,8 @@ export interface GMBFilledFields {
 
 /**
  * Get fields from GMB data to update in Salesforce
- * GMB data is considered authoritative and will overwrite existing Salesforce values
+ * GMB data is used to fill missing fields, but we preserve the original phone number
+ * since phone is a primary identifier from the lead submission
  */
 export function getFilledFieldsFromGMB(
   googlePlaces: GooglePlacesData | undefined,
@@ -486,14 +487,17 @@ export function getFilledFieldsFromGMB(
     return filled;
   }
 
-  // Always use GMB data if available (overwrites existing Salesforce data)
+  // Use GMB data for website and address fields
+  // NOTE: We intentionally DO NOT include phone - the lead's phone is a primary identifier
+  // and should not be overwritten by GMB data (which may be from a wrong match)
   if (googlePlaces.gmb_website) {
     filled.website = googlePlaces.gmb_website;
   }
 
-  if (googlePlaces.gmb_phone) {
-    filled.phone = googlePlaces.gmb_phone;
-  }
+  // Do NOT overwrite phone - it's a primary lead identifier
+  // if (googlePlaces.gmb_phone) {
+  //   filled.phone = googlePlaces.gmb_phone;
+  // }
 
   if (googlePlaces.gmb_address) {
     filled.address = googlePlaces.gmb_address;
@@ -516,13 +520,13 @@ export function getFilledFieldsFromGMB(
 
 /**
  * Format Salesforce fields for API response
- * Includes both custom fields (__c) and standard Lead fields (Website, Phone, etc.)
- * GMB/Clay data is authoritative and will overwrite existing Salesforce values
+ * Includes both custom fields (__c) and standard Lead fields (Website, etc.)
+ * Note: Phone is intentionally NOT updated - it's a primary lead identifier
  */
 export function formatForSalesforceUpdate(
   fields: SalesforceEnrichmentFields,
   website?: string,
-  phone?: string,
+  _phone?: string, // Unused - phone is preserved from original lead
   filledFromGMB?: GMBFilledFields,
   _fitScore?: number,
   gmbTypes?: string[]
@@ -551,17 +555,14 @@ export function formatForSalesforceUpdate(
     }
   }
 
-  // GMB data is authoritative - prefer GMB values over existing Salesforce data
-  // If GMB has a value, use it; otherwise keep original Salesforce value
+  // Update website from GMB if available (GMB website data is usually accurate)
+  // But DO NOT update phone - it's a primary lead identifier and should be preserved
   const finalWebsite = filledFromGMB?.website || website;
-  const finalPhone = filledFromGMB?.phone || phone;
 
   if (finalWebsite) {
     result.Website = finalWebsite;
   }
-  if (finalPhone) {
-    result.Phone = finalPhone;
-  }
+  // Phone is intentionally NOT updated - preserve the original lead phone number
 
   // Always update address fields from GMB if available (GMB is authoritative)
   if (filledFromGMB?.address) {

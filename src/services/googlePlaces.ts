@@ -43,22 +43,41 @@ export class GooglePlacesService {
   ): Promise<string | null> {
     await this.rateLimit();
 
-    // Strategy 1: Try business name with location
+    // Strategy 1: Try phone number first (most accurate identifier)
+    // Phone numbers are unique and give the best match
+    if (phone) {
+      const placeId = await this.searchForPlace(phone);
+      if (placeId) {
+        logger.info('Found place by phone number', { phone, placeId });
+        return placeId;
+      }
+    }
+
+    // Strategy 2: Try business name with full location
     let query = businessName;
     if (city && state) {
       query += ` ${city}, ${state}`;
+    } else if (state) {
+      // Even without city, include state for better location context
+      query += ` ${state}`;
     }
 
     let placeId = await this.searchForPlace(query);
-
-    // Strategy 2: If no result, try with phone number
-    if (!placeId && phone) {
-      await this.rateLimit();
-      placeId = await this.searchForPlace(`${businessName} ${phone}`);
+    if (placeId) {
+      return placeId;
     }
 
-    // Strategy 3: If still no result and we have a website, try extracting domain
-    if (!placeId && website) {
+    // Strategy 3: Try business name with phone (combined search)
+    if (phone) {
+      await this.rateLimit();
+      placeId = await this.searchForPlace(`${businessName} ${phone}`);
+      if (placeId) {
+        return placeId;
+      }
+    }
+
+    // Strategy 4: If still no result and we have a website, try extracting domain
+    if (website) {
       await this.rateLimit();
       try {
         const domain = new URL(website).hostname.replace('www.', '');
@@ -174,7 +193,26 @@ export class GooglePlacesService {
         return null;
       }
 
-      return await this.getPlaceDetails(placeId);
+      const placeDetails = await this.getPlaceDetails(placeId);
+
+      // Validate the match: if we have an expected state, check if it matches
+      // This prevents matching businesses with similar names in different states
+      if (placeDetails && state && placeDetails.gmb_state) {
+        const normalizedExpectedState = state.toUpperCase().trim();
+        const normalizedFoundState = placeDetails.gmb_state.toUpperCase().trim();
+
+        if (normalizedExpectedState !== normalizedFoundState) {
+          logger.warn('GMB state mismatch - discarding result', {
+            businessName,
+            expectedState: state,
+            foundState: placeDetails.gmb_state,
+            foundName: placeDetails.gmb_name,
+          });
+          return null;
+        }
+      }
+
+      return placeDetails;
     } catch (error) {
       logger.error('Google Places enrichment failed', {
         error: error instanceof Error ? error.message : String(error),
