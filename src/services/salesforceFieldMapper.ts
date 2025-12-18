@@ -191,9 +191,14 @@ function determineSpendingOnMarketing(
 
 /**
  * Format Salesforce fields for API response
+ * Includes both custom fields (__c) and standard Lead fields (Website, Phone)
  */
-export function formatForSalesforceUpdate(fields: SalesforceEnrichmentFields): Record<string, unknown> {
-  return {
+export function formatForSalesforceUpdate(
+  fields: SalesforceEnrichmentFields,
+  website?: string,
+  phone?: string
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {
     Has_Website__c: fields.has_website,
     Number_of_Employees__c: fields.number_of_employees,
     Number_of_GBP_Reviews__c: fields.number_of_gbp_reviews,
@@ -204,4 +209,14 @@ export function formatForSalesforceUpdate(fields: SalesforceEnrichmentFields): R
     Business_License__c: fields.business_license,
     Spending_on_Marketing__c: fields.spending_on_marketing,
   };
+
+  // Include standard Lead fields if provided
+  if (website) {
+    result.Website = website;
+  }
+  if (phone) {
+    result.Phone = phone;
+  }
+
+  return result;
 }

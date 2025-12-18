@@ -428,8 +428,8 @@ app.post('/api/enrich-by-id', async (req, res) => {
       let salesforceUpdated = false;
       if (update_salesforce) {
         try {
-          // Update with both fit score and SF-aligned fields
-          const sfUpdateFields = formatForSalesforceUpdate(sfFields);
+          // Update with both fit score and SF-aligned fields (including Website and Phone)
+          const sfUpdateFields = formatForSalesforceUpdate(sfFields, lead.Website, lead.Phone);
           salesforceUpdated = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult, sfUpdateFields);
         } catch (sfError) {
           logger.error('Failed to update Salesforce', { requestId, error: sfError });
@@ -654,8 +654,12 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
         // Calculate Fit Score
         const fitScoreResult = calculateFitScore(enrichmentData);
 
+        // Map to Salesforce-aligned fields (including Website and Phone)
+        const sfFields = mapToSalesforceFields(enrichmentData, lead.website || undefined);
+        const sfUpdateFields = formatForSalesforceUpdate(sfFields, lead.website || undefined, lead.phone || undefined);
+
         // Update Salesforce
-        const updated = await salesforce.updateLead(lead.id, enrichmentData, fitScoreResult);
+        const updated = await salesforce.updateLead(lead.id, enrichmentData, fitScoreResult, sfUpdateFields);
 
         if (updated) {
           results.push({
@@ -884,6 +888,10 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
         // Salesforce-aligned fields (map directly to SF custom fields)
         // Workato should use these values to update the Lead record
         salesforce_fields: {
+          // Standard Lead fields
+          Website: payload.website || null,
+          Phone: payload.phone || null,
+          // Custom fields
           Has_Website__c: sfFields.has_website,
           Number_of_Employees__c: sfFields.number_of_employees,
           Number_of_GBP_Reviews__c: sfFields.number_of_gbp_reviews,
