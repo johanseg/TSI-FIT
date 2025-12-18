@@ -484,7 +484,7 @@ app.post('/api/enrich-by-id', async (req, res) => {
       try {
         await pool.query(
           `INSERT INTO lead_enrichments (
-            lead_id, job_id, enrichment_status,
+            salesforce_lead_id, job_id, enrichment_status,
             google_places_data, clay_data, website_tech_data,
             fit_score, score_breakdown, salesforce_updated,
             has_website, number_of_employees, number_of_gbp_reviews,
@@ -738,7 +738,7 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
         try {
           await pool.query(
             `INSERT INTO lead_enrichments (
-              lead_id, job_id, enrichment_status,
+              salesforce_lead_id, job_id, enrichment_status,
               google_places_data, clay_data, website_tech_data,
               fit_score, score_breakdown, salesforce_updated
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
@@ -894,7 +894,7 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
       try {
         await pool.query(
           `INSERT INTO lead_enrichments (
-            lead_id, job_id, enrichment_status,
+            salesforce_lead_id, job_id, enrichment_status,
             google_places_data, clay_data, website_tech_data,
             fit_score, score_breakdown,
             has_website, number_of_employees, number_of_gbp_reviews,
