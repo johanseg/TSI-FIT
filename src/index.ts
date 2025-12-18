@@ -241,7 +241,7 @@ app.get('/api/setup/database-stats', async (_req, res) => {
       FROM lead_enrichments
     `);
 
-    // Score distribution by ranges (replacing tier distribution)
+    // Score distribution by ranges
     const scoreDistribution = await pool.query(`
       SELECT
         CASE

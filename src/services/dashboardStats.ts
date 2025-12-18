@@ -92,7 +92,7 @@ export class DashboardStatsService {
     const soqlStartDate = `${startDateStr}T00:00:00Z`;
     const soqlEndDate = `${endDateStr}T23:59:59Z`;
 
-    // Try to query with custom Fit Score OUTPUT fields first (Fit_Score__c, Fit_Tier__c)
+    // Try to query with custom Fit Score OUTPUT fields first (Fit_Score__c)
     // Then fall back to existing INPUT fields (Has_Website__c, Number_of_Employees__c, etc.)
     // Finally fall back to basic Lead fields
     let leads: any[] = [];
