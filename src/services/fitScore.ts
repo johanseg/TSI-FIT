@@ -6,20 +6,20 @@ import {
 
 /**
  * Calculate Fit Score based on enrichment data
- * 
- * Solvency Score (0-80):
+ *
+ * Solvency Score (0-85):
  * - Website: +10 if present
  * - Reviews: +0 (<5), +10 (5-14), +20 (15-29), +25 (≥30)
  * - Years in business: +0 (<2), +10 (2-3), +15 (4-7), +20 (≥8)
  * - Employees: +0 (<3), +10 (3-5), +15 (6-15), +20 (≥16)
- * - Physical location: +5 if operational
- * 
- * Sophistication Penalty (0 to -27, half strength, capped at -20):
- * - Meta Pixel: -7
- * - GA4/Google Ads: -5
- * - Multiple pixels (≥2): -10
- * - Marketing automation: -5
- * 
+ * - Physical location: +10 for 1 location, +15 for multiple locations
+ *
+ * Sophistication Penalty (capped at -10):
+ * - Meta Pixel: -3
+ * - GA4/Google Ads: -3
+ * - Multiple pixels (≥2): -4
+ * - Marketing automation: -3
+ *
  * Final: clamp(SolvencyScore + Penalty, 0, 100)
  */
 export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResult {
@@ -49,8 +49,8 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
   const websiteTech = enrichmentData.website_tech;
 
   // Website: +10 if present
-  if (websiteTech?.has_meta_pixel !== undefined || googlePlaces) {
-    // We consider website present if we have any website tech data or Google Places data
+  // Consider website present if we have website tech data, Google Places has website, or GMB profile exists
+  if (websiteTech?.has_meta_pixel !== undefined || googlePlaces?.gmb_website || googlePlaces?.place_id) {
     breakdown.solvency_score.website = 10;
   }
 
@@ -90,9 +90,11 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     breakdown.solvency_score.employees = 0;
   }
 
-  // Physical location: +5 if operational
+  // Physical location: +10 for 1 location, +15 for multiple locations
+  // Note: Currently we can only detect single GMB location, so +10 max
+  // TODO: Add multi-location detection when data source is available
   if (googlePlaces?.gmb_is_operational === true && googlePlaces?.gmb_address) {
-    breakdown.solvency_score.physical_location = 5;
+    breakdown.solvency_score.physical_location = 10;
   }
 
   breakdown.solvency_score.total =
@@ -102,26 +104,26 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     breakdown.solvency_score.employees +
     breakdown.solvency_score.physical_location;
 
-  // Calculate Sophistication Penalty (0 to -27, half strength, capped at -20)
+  // Calculate Sophistication Penalty (capped at -10)
   if (websiteTech) {
-    // Meta Pixel: -7
+    // Meta Pixel: -3
     if (websiteTech.has_meta_pixel) {
-      breakdown.sophistication_penalty.meta_pixel = -7;
+      breakdown.sophistication_penalty.meta_pixel = -3;
     }
 
-    // GA4/Google Ads: -5
+    // GA4/Google Ads: -3
     if (websiteTech.has_ga4 || websiteTech.has_google_ads_tag) {
-      breakdown.sophistication_penalty.ga4_google_ads = -5;
+      breakdown.sophistication_penalty.ga4_google_ads = -3;
     }
 
-    // Multiple pixels (≥2): -10
+    // Multiple pixels (≥2): -4
     if (websiteTech.pixel_count >= 2) {
-      breakdown.sophistication_penalty.multiple_pixels = -10;
+      breakdown.sophistication_penalty.multiple_pixels = -4;
     }
 
-    // Marketing automation (HubSpot): -5
+    // Marketing automation (HubSpot): -3
     if (websiteTech.has_hubspot) {
-      breakdown.sophistication_penalty.marketing_automation = -5;
+      breakdown.sophistication_penalty.marketing_automation = -3;
     }
   }
 
@@ -131,31 +133,18 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     breakdown.sophistication_penalty.multiple_pixels +
     breakdown.sophistication_penalty.marketing_automation;
 
-  // Cap penalty at -20
+  // Cap penalty at -10
   breakdown.sophistication_penalty.capped_total = Math.max(
     breakdown.sophistication_penalty.total_before_cap,
-    -20
+    -10
   );
 
   // Calculate final score: clamp(SolvencyScore + Penalty, 0, 100)
   const rawScore = breakdown.solvency_score.total + breakdown.sophistication_penalty.capped_total;
   breakdown.final_score = Math.max(0, Math.min(100, rawScore));
 
-  // Determine tier
-  let fitTier: 'Disqualified' | 'MQL' | 'High Fit' | 'Premium';
-  if (breakdown.final_score >= 80) {
-    fitTier = 'Premium';
-  } else if (breakdown.final_score >= 60) {
-    fitTier = 'High Fit';
-  } else if (breakdown.final_score >= 40) {
-    fitTier = 'MQL';
-  } else {
-    fitTier = 'Disqualified';
-  }
-
   return {
     fit_score: breakdown.final_score,
-    fit_tier: fitTier,
     score_breakdown: breakdown,
   };
 }

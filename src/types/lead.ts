@@ -24,6 +24,13 @@ export interface GooglePlacesData {
   gmb_rating?: number;
   gmb_address?: string;
   gmb_is_operational?: boolean;
+  // Additional fields for filling missing lead data
+  gmb_website?: string;
+  gmb_phone?: string;
+  gmb_city?: string;
+  gmb_state?: string;
+  gmb_zip?: string;
+  gmb_types?: string[]; // For determining commercial vs residential
 }
 
 export interface ClayData {
@@ -72,7 +79,6 @@ export interface ScoreBreakdown {
 
 export interface FitScoreResult {
   fit_score: number;
-  fit_tier: 'Disqualified' | 'MQL' | 'High Fit' | 'Premium';
   score_breakdown: ScoreBreakdown;
 }
 
@@ -137,7 +143,6 @@ export interface LeadEnrichmentRecord {
   clay_data?: ClayData;
   website_tech_data?: WebsiteTechData;
   fit_score?: number;
-  fit_tier?: string;
   score_breakdown?: ScoreBreakdown;
   // Salesforce-aligned fields
   has_website?: boolean;

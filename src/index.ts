@@ -12,7 +12,7 @@ import { WebsiteTechService } from './services/websiteTech';
 import { calculateFitScore } from './services/fitScore';
 import { SalesforceService } from './services/salesforce';
 import { DashboardStatsService } from './services/dashboardStats';
-import { mapToSalesforceFields, formatForSalesforceUpdate } from './services/salesforceFieldMapper';
+import { mapToSalesforceFields, formatForSalesforceUpdate, getFilledFieldsFromGMB } from './services/salesforceFieldMapper';
 
 // Types
 import { EnrichmentData, SalesforceEnrichmentFields } from './types/lead';
@@ -241,18 +241,20 @@ app.get('/api/setup/database-stats', async (_req, res) => {
       FROM lead_enrichments
     `);
 
-    const tierDistribution = await pool.query(`
-      SELECT fit_tier, COUNT(*) as count
+    // Score distribution by ranges (replacing tier distribution)
+    const scoreDistribution = await pool.query(`
+      SELECT
+        CASE
+          WHEN fit_score >= 80 THEN '80-100'
+          WHEN fit_score >= 60 THEN '60-79'
+          WHEN fit_score >= 40 THEN '40-59'
+          ELSE '0-39'
+        END as score_range,
+        COUNT(*) as count
       FROM lead_enrichments
-      WHERE fit_tier IS NOT NULL
-      GROUP BY fit_tier
-      ORDER BY
-        CASE fit_tier
-          WHEN 'Premium' THEN 1
-          WHEN 'High Fit' THEN 2
-          WHEN 'MQL' THEN 3
-          WHEN 'Disqualified' THEN 4
-        END
+      WHERE fit_score IS NOT NULL
+      GROUP BY score_range
+      ORDER BY score_range DESC
     `);
 
     const recentActivity = await pool.query(`
@@ -266,7 +268,7 @@ app.get('/api/setup/database-stats', async (_req, res) => {
 
     res.json({
       stats: enrichmentStats.rows[0],
-      tierDistribution: tierDistribution.rows,
+      scoreDistribution: scoreDistribution.rows,
       recentActivity: recentActivity.rows,
       tableExists: true,
     });
@@ -277,7 +279,7 @@ app.get('/api/setup/database-stats', async (_req, res) => {
       logger.warn('Database table lead_enrichments does not exist - migrations needed');
       res.json({
         stats: { total_enrichments: 0, completed: 0, failed: 0, pending: 0 },
-        tierDistribution: [],
+        scoreDistribution: [],
         recentActivity: [],
         tableExists: false,
         setupRequired: 'Run database migrations: psql -d $DATABASE_URL -f migrations/001_create_leads_table.sql && psql -d $DATABASE_URL -f migrations/002_create_enrichments_table.sql',
@@ -309,7 +311,7 @@ app.get('/api/lead/:salesforceLeadId', async (req, res) => {
       const query = `
         SELECT Id, Company, Website, Phone, City, State, LeadSource,
                FirstName, LastName, Email, Status, CreatedDate,
-               Fit_Score__c, Fit_Tier__c, Enrichment_Status__c,
+               Fit_Score__c, Enrichment_Status__c,
                Employee_Estimate__c, Years_In_Business__c, Google_Reviews_Count__c
         FROM Lead
         WHERE Id = '${salesforceLeadId}'
@@ -373,43 +375,60 @@ app.post('/api/enrich-by-id', async (req, res) => {
     const websiteTech = new WebsiteTechService();
 
     try {
-      // Google Places enrichment
+      // Step 1: Google Places enrichment (first priority - use website/phone/business)
       try {
         logger.info('Enriching with Google Places', { requestId, businessName: lead.Company });
         const googlePlacesData = await googlePlaces.enrich(
           lead.Company,
           lead.Phone,
           lead.City,
-          lead.State
+          lead.State,
+          lead.Website // Include website for better matching
         );
         if (googlePlacesData) {
           enrichmentData.google_places = googlePlacesData;
+          logger.info('Google Places match found', {
+            requestId,
+            hasGMB: !!googlePlacesData.place_id,
+            gmbName: googlePlacesData.gmb_name,
+          });
         }
       } catch (error) {
         logger.warn('Google Places enrichment failed', { requestId, error });
       }
 
-      // Website tech detection
-      if (lead.Website) {
+      // Get fields that can be filled from GMB data
+      const filledFromGMB = getFilledFieldsFromGMB(enrichmentData.google_places, {
+        website: lead.Website,
+        phone: lead.Phone,
+        city: lead.City,
+        state: lead.State,
+      });
+
+      // Use GMB-filled website for tech detection if original is missing
+      const websiteForTech = lead.Website || filledFromGMB.website;
+
+      // Step 2: Website tech detection (use original or GMB-filled website)
+      if (websiteForTech) {
         try {
-          logger.info('Detecting website tech', { requestId, website: lead.Website });
-          const websiteTechData = await websiteTech.detectTech(lead.Website);
+          logger.info('Detecting website tech', { requestId, website: websiteForTech });
+          const websiteTechData = await websiteTech.detectTech(websiteForTech);
           enrichmentData.website_tech = websiteTechData;
         } catch (error) {
           logger.warn('Website tech detection failed', { requestId, error });
         }
       }
 
-      // Clay enrichment
+      // Step 3: Clay enrichment (for employees, years in business, business license)
       try {
         logger.info('Enriching with Clay', { requestId });
         const clayData = await clay.enrichLead({
           lead_id: requestId,
           business_name: lead.Company,
-          website: lead.Website,
-          phone: lead.Phone,
-          city: lead.City,
-          state: lead.State,
+          website: websiteForTech,
+          phone: lead.Phone || filledFromGMB.phone,
+          city: lead.City || filledFromGMB.city,
+          state: lead.State || filledFromGMB.state,
         });
         if (clayData) {
           enrichmentData.clay = clayData;
@@ -418,19 +437,32 @@ app.post('/api/enrich-by-id', async (req, res) => {
         logger.warn('Clay enrichment failed', { requestId, error });
       }
 
-      // Calculate Fit Score
+      // Step 4: Calculate Fit Score
       const fitScoreResult = calculateFitScore(enrichmentData);
 
-      // Map to Salesforce-aligned fields
-      const sfFields = mapToSalesforceFields(enrichmentData, lead.Website);
+      // Step 5: Map to Salesforce-aligned fields (use GMB-filled website if original missing)
+      const sfFields = mapToSalesforceFields(enrichmentData, websiteForTech);
 
-      // Update Salesforce if requested
+      // Step 6: Update Salesforce if requested
       let salesforceUpdated = false;
       if (update_salesforce) {
         try {
-          // Update with both fit score and SF-aligned fields (including Website and Phone)
-          const sfUpdateFields = formatForSalesforceUpdate(sfFields, lead.Website, lead.Phone);
+          // Update with both fit score and SF-aligned fields (including GMB-filled fields)
+          const sfUpdateFields = formatForSalesforceUpdate(
+            sfFields,
+            lead.Website,
+            lead.Phone,
+            filledFromGMB,
+            fitScoreResult.fit_score
+          );
           salesforceUpdated = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult, sfUpdateFields);
+
+          if (Object.keys(filledFromGMB).length > 0) {
+            logger.info('Filled missing lead fields from GMB', {
+              requestId,
+              filledFields: Object.keys(filledFromGMB),
+            });
+          }
         } catch (sfError) {
           logger.error('Failed to update Salesforce', { requestId, error: sfError });
         }
@@ -445,11 +477,11 @@ app.post('/api/enrich-by-id', async (req, res) => {
           `INSERT INTO lead_enrichments (
             lead_id, job_id, enrichment_status,
             google_places_data, clay_data, website_tech_data,
-            fit_score, fit_tier, score_breakdown, salesforce_updated,
+            fit_score, score_breakdown, salesforce_updated,
             has_website, number_of_employees, number_of_gbp_reviews,
             number_of_years_in_business, has_gmb, gmb_url,
             location_type, business_license, spending_on_marketing
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
           [
             salesforce_lead_id,
             requestId,
@@ -458,7 +490,6 @@ app.post('/api/enrich-by-id', async (req, res) => {
             enrichmentData.clay ? JSON.stringify(enrichmentData.clay) : null,
             enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
             fitScoreResult.fit_score,
-            fitScoreResult.fit_tier,
             JSON.stringify(fitScoreResult.score_breakdown),
             salesforceUpdated,
             sfFields.has_website,
@@ -481,7 +512,6 @@ app.post('/api/enrich-by-id', async (req, res) => {
         requestId,
         salesforceLeadId: salesforce_lead_id,
         fitScore: fitScoreResult.fit_score,
-        fitTier: fitScoreResult.fit_tier,
         duration,
       });
 
@@ -499,7 +529,6 @@ app.post('/api/enrich-by-id', async (req, res) => {
         enrichment: {
           status: enrichmentStatus,
           fit_score: fitScoreResult.fit_score,
-          fit_tier: fitScoreResult.fit_tier,
           score_breakdown: fitScoreResult.score_breakdown,
           google_places: enrichmentData.google_places || null,
           website_tech: enrichmentData.website_tech || null,
@@ -595,7 +624,7 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
     return res.status(404).json({ error: 'No matching leads found' });
   }
 
-  const results: Array<{ id: string; success: boolean; fit_score?: number; fit_tier?: string; error?: string }> = [];
+  const results: Array<{ id: string; success: boolean; fit_score?: number; error?: string }> = [];
 
   for (const lead of leadsToEnrich) {
     const requestId = uuidv4();
@@ -609,13 +638,14 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
       const websiteTech = new WebsiteTechService();
 
       try {
-        // Google Places enrichment
+        // Step 1: Google Places enrichment (first priority)
         try {
           const googlePlacesData = await googlePlaces.enrich(
             lead.company,
             lead.phone || undefined,
             lead.city || undefined,
-            lead.state || undefined
+            lead.state || undefined,
+            lead.website || undefined
           );
           if (googlePlacesData) {
             enrichmentData.google_places = googlePlacesData;
@@ -624,25 +654,36 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
           logger.warn('Google Places enrichment failed', { leadId: lead.id, error });
         }
 
-        // Website tech detection
-        if (lead.website) {
+        // Get fields that can be filled from GMB data
+        const filledFromGMB = getFilledFieldsFromGMB(enrichmentData.google_places, {
+          website: lead.website || undefined,
+          phone: lead.phone || undefined,
+          city: lead.city || undefined,
+          state: lead.state || undefined,
+        });
+
+        // Use GMB-filled website for tech detection if original is missing
+        const websiteForTech = lead.website || filledFromGMB.website;
+
+        // Step 2: Website tech detection
+        if (websiteForTech) {
           try {
-            const websiteTechData = await websiteTech.detectTech(lead.website);
+            const websiteTechData = await websiteTech.detectTech(websiteForTech);
             enrichmentData.website_tech = websiteTechData;
           } catch (error) {
             logger.warn('Website tech detection failed', { leadId: lead.id, error });
           }
         }
 
-        // Clay enrichment
+        // Step 3: Clay enrichment
         try {
           const clayData = await clay.enrichLead({
             lead_id: requestId,
             business_name: lead.company,
-            website: lead.website || undefined,
-            phone: lead.phone || undefined,
-            city: lead.city || undefined,
-            state: lead.state || undefined,
+            website: websiteForTech,
+            phone: lead.phone || filledFromGMB.phone,
+            city: lead.city || filledFromGMB.city,
+            state: lead.state || filledFromGMB.state,
           });
           if (clayData) {
             enrichmentData.clay = clayData;
@@ -651,14 +692,20 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
           logger.warn('Clay enrichment failed', { leadId: lead.id, error });
         }
 
-        // Calculate Fit Score
+        // Step 4: Calculate Fit Score
         const fitScoreResult = calculateFitScore(enrichmentData);
 
-        // Map to Salesforce-aligned fields (including Website and Phone)
-        const sfFields = mapToSalesforceFields(enrichmentData, lead.website || undefined);
-        const sfUpdateFields = formatForSalesforceUpdate(sfFields, lead.website || undefined, lead.phone || undefined);
+        // Step 5: Map to Salesforce-aligned fields (including GMB-filled fields)
+        const sfFields = mapToSalesforceFields(enrichmentData, websiteForTech);
+        const sfUpdateFields = formatForSalesforceUpdate(
+          sfFields,
+          lead.website || undefined,
+          lead.phone || undefined,
+          filledFromGMB,
+          fitScoreResult.fit_score
+        );
 
-        // Update Salesforce
+        // Step 6: Update Salesforce
         const updated = await salesforce.updateLead(lead.id, enrichmentData, fitScoreResult, sfUpdateFields);
 
         if (updated) {
@@ -666,7 +713,6 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
             id: lead.id,
             success: true,
             fit_score: fitScoreResult.fit_score,
-            fit_tier: fitScoreResult.fit_tier,
           });
         } else {
           results.push({
@@ -682,8 +728,8 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
             `INSERT INTO lead_enrichments (
               lead_id, job_id, enrichment_status,
               google_places_data, clay_data, website_tech_data,
-              fit_score, fit_tier, score_breakdown, salesforce_updated
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+              fit_score, score_breakdown, salesforce_updated
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
             [
               lead.id,
               requestId,
@@ -692,7 +738,6 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
               enrichmentData.clay ? JSON.stringify(enrichmentData.clay) : null,
               enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
               fitScoreResult.fit_score,
-              fitScoreResult.fit_tier,
               JSON.stringify(fitScoreResult.score_breakdown),
               updated,
             ]
@@ -748,17 +793,23 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
     const websiteTech = new WebsiteTechService();
 
     try {
-      // Step 1: Google Places enrichment
+      // Step 1: Google Places enrichment (first priority - use website/phone/business)
       try {
         logger.info('Enriching with Google Places', { requestId, businessName: payload.business_name });
         const googlePlacesData = await googlePlaces.enrich(
           payload.business_name,
           payload.phone,
           payload.city,
-          payload.state
+          payload.state,
+          payload.website // Include website for better matching
         );
         if (googlePlacesData) {
           enrichmentData.google_places = googlePlacesData;
+          logger.info('Google Places match found', {
+            requestId,
+            hasGMB: !!googlePlacesData.place_id,
+            gmbName: googlePlacesData.gmb_name,
+          });
         }
       } catch (error) {
         logger.warn('Google Places enrichment failed', {
@@ -767,11 +818,22 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
         });
       }
 
-      // Step 2: Website tech detection
-      if (payload.website) {
+      // Get fields that can be filled from GMB data
+      const filledFromGMB = getFilledFieldsFromGMB(enrichmentData.google_places, {
+        website: payload.website,
+        phone: payload.phone,
+        city: payload.city,
+        state: payload.state,
+      });
+
+      // Use GMB-filled website for tech detection if original is missing
+      const websiteForTech = payload.website || filledFromGMB.website;
+
+      // Step 2: Website tech detection (use original or GMB-filled website)
+      if (websiteForTech) {
         try {
-          logger.info('Detecting website tech', { requestId, website: payload.website });
-          const websiteTechData = await websiteTech.detectTech(payload.website);
+          logger.info('Detecting website tech', { requestId, website: websiteForTech });
+          const websiteTechData = await websiteTech.detectTech(websiteForTech);
           enrichmentData.website_tech = websiteTechData;
         } catch (error) {
           logger.warn('Website tech detection failed', {
@@ -781,16 +843,16 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
         }
       }
 
-      // Step 3: Clay enrichment
+      // Step 3: Clay enrichment (for employees, years in business, business license)
       try {
         logger.info('Enriching with Clay', { requestId });
         const clayData = await clay.enrichLead({
           lead_id: requestId,
           business_name: payload.business_name,
-          website: payload.website,
-          phone: payload.phone,
-          city: payload.city,
-          state: payload.state,
+          website: websiteForTech,
+          phone: payload.phone || filledFromGMB.phone,
+          city: payload.city || filledFromGMB.city,
+          state: payload.state || filledFromGMB.state,
         });
         if (clayData) {
           enrichmentData.clay = clayData;
@@ -805,8 +867,8 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
       // Step 4: Calculate Fit Score
       const fitScoreResult = calculateFitScore(enrichmentData);
 
-      // Step 5: Map to Salesforce-aligned fields
-      const sfFields = mapToSalesforceFields(enrichmentData, payload.website);
+      // Step 5: Map to Salesforce-aligned fields (use GMB-filled website if original missing)
+      const sfFields = mapToSalesforceFields(enrichmentData, websiteForTech);
 
       // Determine enrichment status
       const hasAnyEnrichment =
@@ -822,11 +884,11 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
           `INSERT INTO lead_enrichments (
             lead_id, job_id, enrichment_status,
             google_places_data, clay_data, website_tech_data,
-            fit_score, fit_tier, score_breakdown,
+            fit_score, score_breakdown,
             has_website, number_of_employees, number_of_gbp_reviews,
             number_of_years_in_business, has_gmb, gmb_url,
             location_type, business_license, spending_on_marketing
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
           [
             payload.salesforce_lead_id,
             requestId,
@@ -835,7 +897,6 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
             enrichmentData.clay ? JSON.stringify(enrichmentData.clay) : null,
             enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
             fitScoreResult.fit_score,
-            fitScoreResult.fit_tier,
             JSON.stringify(fitScoreResult.score_breakdown),
             sfFields.has_website,
             sfFields.number_of_employees,
@@ -861,16 +922,22 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
         requestId,
         salesforceLeadId: payload.salesforce_lead_id,
         fitScore: fitScoreResult.fit_score,
-        fitTier: fitScoreResult.fit_tier,
         duration,
       });
+
+      // Log if we filled any fields from GMB
+      if (Object.keys(filledFromGMB).length > 0) {
+        logger.info('Filled missing lead fields from GMB', {
+          requestId,
+          filledFields: Object.keys(filledFromGMB),
+        });
+      }
 
       // Build response for Workato to update Salesforce
       // Includes both raw enrichment data and Salesforce-aligned field values
       const response = {
         enrichment_status: enrichmentStatus,
         fit_score: fitScoreResult.fit_score,
-        fit_tier: fitScoreResult.fit_tier,
         // Raw enrichment data (for reference/debugging)
         employee_estimate: enrichmentData.clay?.employee_estimate ?? null,
         years_in_business: enrichmentData.clay?.years_in_business ?? null,
@@ -885,12 +952,18 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
         score_breakdown: JSON.stringify(fitScoreResult.score_breakdown),
         enrichment_timestamp: new Date().toISOString(),
         request_id: requestId,
+        // Fields filled from GMB data (when missing from original lead)
+        filled_from_gmb: filledFromGMB,
         // Salesforce-aligned fields (map directly to SF custom fields)
         // Workato should use these values to update the Lead record
         salesforce_fields: {
-          // Standard Lead fields
-          Website: payload.website || null,
-          Phone: payload.phone || null,
+          // Standard Lead fields (use original or GMB-filled values)
+          Website: payload.website || filledFromGMB.website || null,
+          Phone: payload.phone || filledFromGMB.phone || null,
+          Street: filledFromGMB.address || null,
+          City: payload.city || filledFromGMB.city || null,
+          State: payload.state || filledFromGMB.state || null,
+          PostalCode: filledFromGMB.zip || null,
           // Custom fields
           Has_Website__c: sfFields.has_website,
           Number_of_Employees__c: sfFields.number_of_employees,

@@ -5,7 +5,9 @@ import {
   GBPReviewsPicklist,
   YearsInBusinessPicklist,
   LocationTypePicklist,
+  GooglePlacesData,
 } from '../types/lead';
+import { GooglePlacesService } from './googlePlaces';
 
 /**
  * Maps enrichment data to Salesforce custom field values
@@ -29,8 +31,8 @@ export function mapToSalesforceFields(
   const clay = enrichmentData.clay;
   const websiteTech = enrichmentData.website_tech;
 
-  // Has_Website__c - True if we have website tech data or a website URL was provided
-  const has_website = !!(websiteTech || websiteUrl);
+  // Has_Website__c - True if we have website tech data, a website URL was provided, or GMB has website
+  const has_website = !!(websiteTech || websiteUrl || googlePlaces?.gmb_website);
 
   // Number_of_Employees__c - Map employee estimate to picklist
   const number_of_employees = mapEmployeeCount(clay?.employee_estimate);
@@ -132,26 +134,42 @@ function mapYearsInBusiness(yearsInBusiness?: number): YearsInBusinessPicklist |
 
 /**
  * Determine location type from Google Places data
- * - If has physical address and is operational -> "Physical Location (Office)" or "Retail Location (Store Front)"
- * - Otherwise -> "Home Office" (default assumption for service businesses)
+ * - If commercial/storefront location -> "Physical Location (Office)" or "Retail Location (Store Front)"
+ * - If residential detected -> null (not a valid business location)
+ * - If home-based service business -> "Home Office"
  */
 function mapLocationType(
-  googlePlaces?: EnrichmentData['google_places']
+  googlePlaces?: GooglePlacesData
 ): LocationTypePicklist | null {
   if (!googlePlaces) {
     return null;
   }
 
+  // Use the new commercial location detection
+  const isCommercial = GooglePlacesService.isCommercialLocation(googlePlaces);
+
+  // If residential, don't assign a location type (user requirement: must not be residential)
+  if (isCommercial === false) {
+    return null;
+  }
+
   // If we have Google Places data with an address and operational status
-  if (googlePlaces.gmb_address && googlePlaces.gmb_is_operational) {
-    // Check primary category for retail indicators
-    const category = (googlePlaces.gmb_primary_category || '').toLowerCase();
-    const retailCategories = [
+  if (googlePlaces.gmb_address && googlePlaces.gmb_is_operational && isCommercial) {
+    // Check types for retail indicators
+    const types = googlePlaces.gmb_types || [];
+    const retailTypes = [
       'store', 'shop', 'retail', 'boutique', 'salon', 'spa',
-      'restaurant', 'cafe', 'bar', 'bakery', 'dealership'
+      'restaurant', 'cafe', 'bar', 'bakery', 'dealership',
+      'clothing_store', 'shoe_store', 'jewelry_store',
+      'electronics_store', 'hardware_store', 'home_goods_store',
+      'furniture_store', 'book_store', 'florist',
+      'grocery_or_supermarket', 'convenience_store', 'supermarket',
+      'beauty_salon', 'hair_care', 'gym', 'pharmacy',
     ];
 
-    const isRetail = retailCategories.some(rc => category.includes(rc));
+    const isRetail = types.some(t =>
+      retailTypes.some(rt => t.toLowerCase().includes(rt))
+    );
 
     if (isRetail) {
       return 'Retail Location (Store Front)';
@@ -160,8 +178,8 @@ function mapLocationType(
     }
   }
 
-  // If we found a GMB but no clear physical location
-  if (googlePlaces.place_id) {
+  // If we found a GMB but no clear physical location (service-based business)
+  if (googlePlaces.place_id && !googlePlaces.gmb_address) {
     return 'Home Office';
   }
 
@@ -190,13 +208,82 @@ function determineSpendingOnMarketing(
 }
 
 /**
+ * Fields that can be filled from GMB data when missing from the lead
+ */
+export interface GMBFilledFields {
+  website?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+}
+
+/**
+ * Get fields that can be filled from GMB data
+ * Only returns values for fields that are missing from the original lead
+ */
+export function getFilledFieldsFromGMB(
+  googlePlaces: GooglePlacesData | undefined,
+  originalLead: {
+    website?: string;
+    phone?: string;
+    address?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+  }
+): GMBFilledFields {
+  const filled: GMBFilledFields = {};
+
+  if (!googlePlaces) {
+    return filled;
+  }
+
+  // Fill website if missing
+  if (!originalLead.website && googlePlaces.gmb_website) {
+    filled.website = googlePlaces.gmb_website;
+  }
+
+  // Fill phone if missing
+  if (!originalLead.phone && googlePlaces.gmb_phone) {
+    filled.phone = googlePlaces.gmb_phone;
+  }
+
+  // Fill address if missing
+  if (!originalLead.address && googlePlaces.gmb_address) {
+    filled.address = googlePlaces.gmb_address;
+  }
+
+  // Fill city if missing
+  if (!originalLead.city && googlePlaces.gmb_city) {
+    filled.city = googlePlaces.gmb_city;
+  }
+
+  // Fill state if missing
+  if (!originalLead.state && googlePlaces.gmb_state) {
+    filled.state = googlePlaces.gmb_state;
+  }
+
+  // Fill zip if missing
+  if (!originalLead.zip && googlePlaces.gmb_zip) {
+    filled.zip = googlePlaces.gmb_zip;
+  }
+
+  return filled;
+}
+
+/**
  * Format Salesforce fields for API response
- * Includes both custom fields (__c) and standard Lead fields (Website, Phone)
+ * Includes both custom fields (__c) and standard Lead fields (Website, Phone, etc.)
+ * Fills in missing fields from GMB data
  */
 export function formatForSalesforceUpdate(
   fields: SalesforceEnrichmentFields,
   website?: string,
-  phone?: string
+  phone?: string,
+  filledFromGMB?: GMBFilledFields,
+  fitScore?: number
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {
     Has_Website__c: fields.has_website,
@@ -210,12 +297,36 @@ export function formatForSalesforceUpdate(
     Spending_on_Marketing__c: fields.spending_on_marketing,
   };
 
-  // Include standard Lead fields if provided
-  if (website) {
-    result.Website = website;
+  // Add Fit Score if provided
+  if (fitScore !== undefined && fitScore !== null) {
+    result.Fit_Score__c = fitScore;
+    result.Fit_Score_Timestamp__c = new Date().toISOString();
+    result.Enrichment_Status__c = 'success';
   }
-  if (phone) {
-    result.Phone = phone;
+
+  // Use original values or GMB-filled values for standard Lead fields
+  const finalWebsite = website || filledFromGMB?.website;
+  const finalPhone = phone || filledFromGMB?.phone;
+
+  if (finalWebsite) {
+    result.Website = finalWebsite;
+  }
+  if (finalPhone) {
+    result.Phone = finalPhone;
+  }
+
+  // Include address fields if filled from GMB
+  if (filledFromGMB?.address) {
+    result.Street = filledFromGMB.address;
+  }
+  if (filledFromGMB?.city) {
+    result.City = filledFromGMB.city;
+  }
+  if (filledFromGMB?.state) {
+    result.State = filledFromGMB.state;
+  }
+  if (filledFromGMB?.zip) {
+    result.PostalCode = filledFromGMB.zip;
   }
 
   return result;

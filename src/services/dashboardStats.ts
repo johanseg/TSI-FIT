@@ -1,7 +1,7 @@
 import { SalesforceService } from './salesforce';
 
-export interface TierDistribution {
-  tier: string;
+export interface ScoreDistribution {
+  score: number;
   count: number;
   percentage: number;
 }
@@ -12,7 +12,7 @@ export interface LeadSourceStats {
   enrichedLeads: number;
   enrichmentRate: number;
   avgFitScore: number;
-  tierDistribution: TierDistribution[];
+  scoreDistribution: ScoreDistribution[];
 }
 
 export interface DashboardStats {
@@ -21,7 +21,7 @@ export interface DashboardStats {
   unenrichedLeads: number;
   enrichmentRate: number;
   avgFitScore: number;
-  tierDistribution: TierDistribution[];
+  scoreDistribution: ScoreDistribution[];
   byLeadSource: LeadSourceStats[];
   lastUpdated: string;
   customFieldsAvailable: boolean;
@@ -46,44 +46,29 @@ export class DashboardStatsService {
     this.salesforce = salesforce;
   }
 
-  // Helper to get tier from score (works with Score__c 0-5 range or Fit_Score__c 0-100 range)
-  private getTierFromScore(score: number | null | undefined): string | null {
-    if (score === null || score === undefined) return null;
+  // Calculate score distribution for leads (group by individual scores)
+  private calculateScoreDistribution(leads: any[]): ScoreDistribution[] {
+    const scoreMap = new Map<number, number>();
 
-    // Check if it's a 0-5 scale (Score__c) or 0-100 scale (Fit_Score__c)
-    if (score <= 5) {
-      // 0-5 scale: 0-1 = Disqualified, 1-2 = MQL, 2-3 = High Fit, 3-5 = Premium
-      if (score < 1) return 'Disqualified';
-      if (score < 2) return 'MQL';
-      if (score < 3) return 'High Fit';
-      return 'Premium';
-    } else {
-      // 0-100 scale: 0-39 = Disqualified, 40-59 = MQL, 60-79 = High Fit, 80-100 = Premium
-      if (score < 40) return 'Disqualified';
-      if (score < 60) return 'MQL';
-      if (score < 80) return 'High Fit';
-      return 'Premium';
+    // Get score for each lead
+    for (const lead of leads) {
+      const score = lead.Fit_Score__c;
+      if (score !== null && score !== undefined) {
+        // Round to nearest integer for grouping
+        const roundedScore = Math.round(score);
+        scoreMap.set(roundedScore, (scoreMap.get(roundedScore) || 0) + 1);
+      }
     }
-  }
 
-  private calculateTierDistribution(leads: any[]): TierDistribution[] {
-    const tiers = ['Disqualified', 'MQL', 'High Fit', 'Premium'];
-    const distribution: TierDistribution[] = [];
+    const total = Array.from(scoreMap.values()).reduce((sum, count) => sum + count, 0);
+    const distribution: ScoreDistribution[] = [];
 
-    // Get tier for each lead - check Fit_Tier__c first, then calculate from score
-    const leadsWithTiers = leads.map(lead => {
-      if (lead.Fit_Tier__c) return lead.Fit_Tier__c;
-      // Calculate tier from score (check Score__c then Fit_Score__c)
-      const score = lead.Score__c ?? lead.Fit_Score__c;
-      return this.getTierFromScore(score);
-    }).filter(tier => tier !== null);
-
-    const total = leadsWithTiers.length;
-
-    for (const tier of tiers) {
-      const count = leadsWithTiers.filter(t => t === tier).length;
+    // Sort by score and create distribution entries
+    const sortedScores = Array.from(scoreMap.keys()).sort((a, b) => a - b);
+    for (const score of sortedScores) {
+      const count = scoreMap.get(score) || 0;
       distribution.push({
-        tier,
+        score,
         count,
         percentage: total > 0 ? (count / total) * 100 : 0,
       });
@@ -119,7 +104,7 @@ export class DashboardStatsService {
       // First try: Query with Fit Score output fields (what we write to SF after enrichment)
       const leadsQuery = `
         SELECT Id, Company, LeadSource, Website, Phone, City, State,
-               Fit_Score__c, Fit_Tier__c, Enrichment_Status__c,
+               Fit_Score__c, Enrichment_Status__c,
                Employee_Estimate__c, Years_In_Business__c,
                Google_Reviews_Count__c, Has_Website__c,
                Pixels_Detected__c, Fit_Score_Timestamp__c, CreatedDate
@@ -134,10 +119,9 @@ export class DashboardStatsService {
 
         try {
           // Second try: Query with existing Salesforce INPUT fields (from SALESFORCE_SCHEMA.md)
-          // Include Score__c which is the 0-5 enrichment score field
           const existingFieldsQuery = `
             SELECT Id, Company, LeadSource, Website, Phone, City, State,
-                   Score__c, Has_Website__c, Has_GMB__c, GMB_URL__c,
+                   Fit_Score__c, Has_Website__c, Has_GMB__c, GMB_URL__c,
                    Number_of_Employees__c, Number_of_GBP_Reviews__c,
                    Number_of_Years_in_Business__c, Location_Type__c,
                    Business_License__c, Spending_on_Marketing__c,
@@ -147,7 +131,7 @@ export class DashboardStatsService {
           `;
           const result = await this.salesforce.query(existingFieldsQuery);
           leads = result.records as any[];
-          setupRequired.push('Fit Score output fields need to be created (Fit_Score__c, Fit_Tier__c, etc.) - using existing input fields');
+          setupRequired.push('Some Fit Score output fields may need to be created - using existing input fields');
         } catch (innerError) {
           // Third try: Basic Lead fields only
           if (innerError instanceof Error && innerError.message.includes('No such column')) {
@@ -174,25 +158,13 @@ export class DashboardStatsService {
     const totalLeads = leads.length;
 
     // Helper to check if a lead is "enriched"
-    // A lead is enriched if it has a Score__c value between 0-5, OR if Fit_Score__c is set
-    // Check multiple possible score fields depending on which query succeeded
+    // A lead is enriched if it has a Fit_Score__c value set
     const isEnriched = (lead: any): boolean => {
-      // Check Score__c (0-5 range) - primary enrichment indicator
-      if (lead.Score__c !== undefined && lead.Score__c !== null) {
-        return true;
-      }
-      // Check Fit_Score__c as fallback
-      if (lead.Fit_Score__c !== undefined && lead.Fit_Score__c !== null) {
-        return true;
-      }
-      return false;
+      return lead.Fit_Score__c !== undefined && lead.Fit_Score__c !== null;
     };
 
-    // Get score value from lead (check both possible fields)
+    // Get score value from lead
     const getScore = (lead: any): number | null => {
-      if (lead.Score__c !== undefined && lead.Score__c !== null) {
-        return lead.Score__c;
-      }
       if (lead.Fit_Score__c !== undefined && lead.Fit_Score__c !== null) {
         return lead.Fit_Score__c;
       }
@@ -209,8 +181,8 @@ export class DashboardStatsService {
       ? leadsWithScores.reduce((sum, lead) => sum + (getScore(lead) || 0), 0) / leadsWithScores.length
       : 0;
 
-    // Tier distribution
-    const tierDistribution = this.calculateTierDistribution(leads);
+    // Score distribution
+    const scoreDistribution = this.calculateScoreDistribution(leads);
 
     // Group by lead source
     const leadSourceMap = new Map<string, any[]>();
@@ -237,7 +209,7 @@ export class DashboardStatsService {
         enrichedLeads: sourceEnrichedLeads,
         enrichmentRate: sourceTotalLeads > 0 ? (sourceEnrichedLeads / sourceTotalLeads) * 100 : 0,
         avgFitScore: sourceAvgFitScore,
-        tierDistribution: this.calculateTierDistribution(sourceLeads),
+        scoreDistribution: this.calculateScoreDistribution(sourceLeads),
       });
     }
 
@@ -250,7 +222,7 @@ export class DashboardStatsService {
       unenrichedLeads,
       enrichmentRate,
       avgFitScore,
-      tierDistribution,
+      scoreDistribution,
       byLeadSource,
       lastUpdated: new Date().toISOString(),
       customFieldsAvailable,
@@ -290,14 +262,14 @@ export class DashboardStatsService {
       createdDate: lead.CreatedDate,
     }));
 
-    // Try with Score__c first (0-5 score field), then Fit_Score__c, then no custom fields
+    // Try with Fit_Score__c first, then fallback to no custom fields
     try {
-      // First try: Score__c (the 0-5 enrichment score field)
+      // First try: Fit_Score__c (the enrichment score field)
       // Get total count first
       const countQuery = `
         SELECT COUNT(Id) cnt
         FROM Lead
-        WHERE Score__c = null
+        WHERE Fit_Score__c = null
           AND Company != null
           AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
       `;
@@ -308,7 +280,7 @@ export class DashboardStatsService {
       const query = `
         SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
         FROM Lead
-        WHERE Score__c = null
+        WHERE Fit_Score__c = null
           AND Company != null
           AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
         ORDER BY CreatedDate DESC
@@ -318,57 +290,28 @@ export class DashboardStatsService {
       const result = await this.salesforce.query(query);
       return { leads: mapLeads(result.records as any[]), totalCount };
     } catch (error) {
+      // Fallback: No custom fields - return all leads within date range
       if (error instanceof Error && error.message.includes('No such column')) {
-        try {
-          // Second try: Fit_Score__c
-          const countQuery = `
-            SELECT COUNT(Id) cnt
-            FROM Lead
-            WHERE Fit_Score__c = null
-              AND Company != null
-              AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
-          `;
-          const countResult = await this.salesforce.query(countQuery);
-          const totalCount = (countResult.records as any[])[0]?.cnt || 0;
+        const countQuery = `
+          SELECT COUNT(Id) cnt
+          FROM Lead
+          WHERE Company != null
+            AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
+        `;
+        const countResult = await this.salesforce.query(countQuery);
+        const totalCount = (countResult.records as any[])[0]?.cnt || 0;
 
-          const query = `
-            SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
-            FROM Lead
-            WHERE Fit_Score__c = null
-              AND Company != null
-              AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
-            ORDER BY CreatedDate DESC
-            LIMIT ${limit}
-            OFFSET ${offset}
-          `;
-          const result = await this.salesforce.query(query);
-          return { leads: mapLeads(result.records as any[]), totalCount };
-        } catch (innerError) {
-          // Third try: No custom fields - return all leads within date range
-          if (innerError instanceof Error && innerError.message.includes('No such column')) {
-            const countQuery = `
-              SELECT COUNT(Id) cnt
-              FROM Lead
-              WHERE Company != null
-                AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
-            `;
-            const countResult = await this.salesforce.query(countQuery);
-            const totalCount = (countResult.records as any[])[0]?.cnt || 0;
-
-            const query = `
-              SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
-              FROM Lead
-              WHERE Company != null
-                AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
-              ORDER BY CreatedDate DESC
-              LIMIT ${limit}
-              OFFSET ${offset}
-            `;
-            const result = await this.salesforce.query(query);
-            return { leads: mapLeads(result.records as any[]), totalCount };
-          }
-          throw innerError;
-        }
+        const query = `
+          SELECT Id, Company, Website, Phone, City, State, LeadSource, CreatedDate
+          FROM Lead
+          WHERE Company != null
+            AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
+          ORDER BY CreatedDate DESC
+          LIMIT ${limit}
+          OFFSET ${offset}
+        `;
+        const result = await this.salesforce.query(query);
+        return { leads: mapLeads(result.records as any[]), totalCount };
       }
       throw error;
     }

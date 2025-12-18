@@ -145,7 +145,6 @@ export class SalesforceService {
 
       const updateData: Record<string, unknown> = {
         Fit_Score__c: fitScore.fit_score,
-        Fit_Tier__c: fitScore.fit_tier,
         Fit_Score_Timestamp__c: new Date().toISOString(),
         Enrichment_Status__c: 'success',
       };
@@ -184,7 +183,6 @@ export class SalesforceService {
       logger.info('Salesforce Opportunity updated successfully', {
         oppId: salesforceOppId,
         fitScore: fitScore.fit_score,
-        fitTier: fitScore.fit_tier,
       });
 
       return true;

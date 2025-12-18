@@ -726,7 +726,7 @@
   </div> <!-- End of appContainer -->
 
   <script>
-    let tierChart, sourceChart, activityChart;
+    let scoreChart, sourceChart, activityChart;
     let selectedLeads = new Set();
 
     // Pagination state for unenriched leads
@@ -973,9 +973,9 @@
 
         <div class="charts-row">
           <div class="card">
-            <h3>Fit Tier Distribution</h3>
+            <h3>Score Distribution</h3>
             <div class="chart-container">
-              <canvas id="tierChart"></canvas>
+              <canvas id="scoreChart"></canvas>
             </div>
           </div>
           <div class="card">
@@ -1027,32 +1027,42 @@
         </div>
       `;
 
-      renderTierChart(stats.tierDistribution);
+      renderScoreChart(stats.scoreDistribution);
       renderSourceChart(stats.byLeadSource);
       if (dbStats && dbStats.recentActivity.length > 0) {
         renderActivityChart(dbStats.recentActivity);
       }
     }
 
-    function renderTierChart(distribution) {
-      const ctx = document.getElementById('tierChart');
+    function renderScoreChart(distribution) {
+      const ctx = document.getElementById('scoreChart');
       if (!ctx) return;
-      if (tierChart) tierChart.destroy();
+      if (scoreChart) scoreChart.destroy();
 
-      const colors = {
-        'Disqualified': '#ef4444',
-        'MQL': '#f97316',
-        'High Fit': '#22c55e',
-        'Premium': '#3b82f6',
+      // Sort by score value for proper ordering
+      const sortedDistribution = [...distribution].sort((a, b) => {
+        const scoreA = parseInt(a.score.toString().split('-')[0]) || 0;
+        const scoreB = parseInt(b.score.toString().split('-')[0]) || 0;
+        return scoreA - scoreB;
+      });
+
+      // Color gradient from red (low scores) to green (high scores)
+      const getColor = (score) => {
+        const numScore = parseInt(score.toString().split('-')[0]) || 0;
+        if (numScore >= 80) return '#22c55e'; // Green
+        if (numScore >= 60) return '#84cc16'; // Lime
+        if (numScore >= 40) return '#f97316'; // Orange
+        return '#ef4444'; // Red
       };
 
-      tierChart = new Chart(ctx, {
+      scoreChart = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: distribution.map(d => d.tier),
+          labels: sortedDistribution.map(d => `Score ${d.score}`),
           datasets: [{
-            data: distribution.map(d => d.count),
-            backgroundColor: distribution.map(d => colors[d.tier] || '#6b7280'),
+            label: 'Leads',
+            data: sortedDistribution.map(d => d.count),
+            backgroundColor: sortedDistribution.map(d => getColor(d.score)),
             borderRadius: 6,
           }]
         },
@@ -1061,8 +1071,15 @@
           maintainAspectRatio: false,
           plugins: { legend: { display: false } },
           scales: {
-            y: { beginAtZero: true, grid: { color: '#f0f0f0' } },
-            x: { grid: { display: false } }
+            y: {
+              beginAtZero: true,
+              grid: { color: '#f0f0f0' },
+              title: { display: true, text: 'Total Leads' }
+            },
+            x: {
+              grid: { display: false },
+              title: { display: true, text: 'Fit Score' }
+            }
           }
         }
       });
@@ -1162,7 +1179,6 @@
                 <div class="result-item"><div class="label">Lead Source</div><div class="value">${data.salesforce.LeadSource || '-'}</div></div>
                 <div class="result-item"><div class="label">Status</div><div class="value">${data.salesforce.Status || '-'}</div></div>
                 ${data.salesforce.Fit_Score__c ? `<div class="result-item"><div class="label">Current Fit Score</div><div class="value">${data.salesforce.Fit_Score__c}</div></div>` : ''}
-                ${data.salesforce.Fit_Tier__c ? `<div class="result-item"><div class="label">Current Tier</div><div class="value"><span class="badge ${data.salesforce.Fit_Tier__c.toLowerCase().replace(' ', '-')}">${data.salesforce.Fit_Tier__c}</span></div></div>` : ''}
               </div>
             </div>
           `;
@@ -1174,7 +1190,6 @@
               <h5>Last Local Enrichment (${new Date(data.localEnrichment.created_at).toLocaleString()})</h5>
               <div class="result-grid">
                 <div class="result-item"><div class="label">Fit Score</div><div class="value">${data.localEnrichment.fit_score ?? '-'}</div></div>
-                <div class="result-item"><div class="label">Fit Tier</div><div class="value">${data.localEnrichment.fit_tier ? `<span class="badge ${data.localEnrichment.fit_tier.toLowerCase().replace(' ', '-')}">${data.localEnrichment.fit_tier}</span>` : '-'}</div></div>
                 <div class="result-item"><div class="label">Status</div><div class="value">${data.localEnrichment.enrichment_status || '-'}</div></div>
               </div>
             </div>
@@ -1227,7 +1242,6 @@
               <h5>Fit Score Result</h5>
               <div class="result-grid">
                 <div class="result-item"><div class="label">Fit Score</div><div class="value" style="font-size: 24px; color: #4f46e5;">${data.enrichment.fit_score}</div></div>
-                <div class="result-item"><div class="label">Fit Tier</div><div class="value"><span class="badge ${data.enrichment.fit_tier.toLowerCase().replace(' ', '-')}">${data.enrichment.fit_tier}</span></div></div>
                 <div class="result-item"><div class="label">Duration</div><div class="value">${(data.duration_ms / 1000).toFixed(1)}s</div></div>
                 <div class="result-item"><div class="label">Salesforce Updated</div><div class="value">${data.salesforce_updated ? '<span class="badge success">Yes</span>' : '<span class="badge warning">No</span>'}</div></div>
               </div>
@@ -1337,14 +1351,13 @@
               <div class="stat-card"><h3>Failed</h3><div class="value red">${data.failed}</div></div>
             </div>
             <table>
-              <thead><tr><th>Lead ID</th><th>Status</th><th>Fit Score</th><th>Fit Tier</th></tr></thead>
+              <thead><tr><th>Lead ID</th><th>Status</th><th>Fit Score</th></tr></thead>
               <tbody>
                 ${data.results.map(r => `
                   <tr>
                     <td><code>${r.id}</code></td>
                     <td>${r.success ? '<span class="badge success">Success</span>' : `<span class="badge error">Failed</span>`}</td>
                     <td>${r.fit_score ?? '-'}</td>
-                    <td>${r.fit_tier ? `<span class="badge ${r.fit_tier.toLowerCase().replace(' ', '-')}">${r.fit_tier}</span>` : '-'}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -1600,14 +1613,13 @@
               <div class="stat-card"><h3>Failed</h3><div class="value red">${data.failed}</div></div>
             </div>
             <table>
-              <thead><tr><th>Lead ID</th><th>Status</th><th>Fit Score</th><th>Fit Tier</th></tr></thead>
+              <thead><tr><th>Lead ID</th><th>Status</th><th>Fit Score</th></tr></thead>
               <tbody>
                 ${data.results.map(r => `
                   <tr>
                     <td>${r.id}</td>
                     <td>${r.success ? '<span class="badge success">Success</span>' : `<span class="badge error">Failed</span>`}</td>
                     <td>${r.fit_score ?? '-'}</td>
-                    <td>${r.fit_tier ? `<span class="badge ${r.fit_tier.toLowerCase().replace(' ', '-')}">${r.fit_tier}</span>` : '-'}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -1715,15 +1727,15 @@
               <div class="stat-card"><h3>Failed</h3><div class="value red">${parseInt(dbStats.stats.failed || 0).toLocaleString()}</div></div>
               <div class="stat-card"><h3>Avg Fit Score</h3><div class="value purple">${dbStats.stats.avg_fit_score ?? '-'}</div></div>
             </div>
-            ${dbStats.tierDistribution.length > 0 ? `
-            <h4 style="margin: 20px 0 10px;">Tier Distribution (Local DB)</h4>
+            ${dbStats.scoreDistribution && dbStats.scoreDistribution.length > 0 ? `
+            <h4 style="margin: 20px 0 10px;">Score Distribution (Local DB)</h4>
             <table>
-              <thead><tr><th>Tier</th><th>Count</th></tr></thead>
+              <thead><tr><th>Score Range</th><th>Count</th></tr></thead>
               <tbody>
-                ${dbStats.tierDistribution.map(t => `
+                ${dbStats.scoreDistribution.map(s => `
                   <tr>
-                    <td><span class="badge ${t.fit_tier.toLowerCase().replace(' ', '-')}">${t.fit_tier}</span></td>
-                    <td>${parseInt(t.count).toLocaleString()}</td>
+                    <td><span class="badge info">${s.score_range}</span></td>
+                    <td>${parseInt(s.count).toLocaleString()}</td>
                   </tr>
                 `).join('')}
               </tbody>
