@@ -6,6 +6,41 @@ import { retryWithBackoff, sleep } from '../utils/retry';
 // Google Places API (New) base URL
 const GOOGLE_PLACES_API_BASE = 'https://places.googleapis.com/v1';
 
+// Domains that should not be considered as business websites
+const INVALID_WEBSITE_DOMAINS = [
+  'facebook.com',
+  'fb.com',
+  'yelp.com',
+  'instagram.com',
+  'twitter.com',
+  'x.com',
+  'linkedin.com',
+  'youtube.com',
+  'tiktok.com',
+  'pinterest.com',
+  'tripadvisor.com',
+  'yellowpages.com',
+  'bbb.org',
+  'mapquest.com',
+  'foursquare.com',
+];
+
+/**
+ * Check if a URL is a valid business website (not a social media or directory listing)
+ */
+function isValidBusinessWebsite(url: string | undefined): boolean {
+  if (!url) return false;
+
+  try {
+    const hostname = new URL(url).hostname.toLowerCase().replace('www.', '');
+    return !INVALID_WEBSITE_DOMAINS.some(domain =>
+      hostname === domain || hostname.endsWith('.' + domain)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export class GooglePlacesService {
   private client: AxiosInstance;
   private lastRequestTime: number = 0;
@@ -217,6 +252,17 @@ export class GooglePlacesService {
           }
         }
 
+        // Filter out social media / directory websites - they're not real business websites
+        const rawWebsite = result.websiteUri;
+        const validWebsite = isValidBusinessWebsite(rawWebsite) ? rawWebsite : undefined;
+
+        if (rawWebsite && !validWebsite) {
+          logger.info('Filtered out non-business website from GMB', {
+            placeId,
+            filteredUrl: rawWebsite,
+          });
+        }
+
         return {
           place_id: placeId,
           gmb_name: result.displayName?.text || undefined,
@@ -225,7 +271,7 @@ export class GooglePlacesService {
           gmb_review_count: result.userRatingCount || undefined,
           gmb_address: result.formattedAddress || undefined,
           gmb_is_operational: result.businessStatus === 'OPERATIONAL',
-          gmb_website: result.websiteUri || undefined,
+          gmb_website: validWebsite,
           gmb_phone: result.nationalPhoneNumber || undefined,
           gmb_city: city,
           gmb_state: state,
