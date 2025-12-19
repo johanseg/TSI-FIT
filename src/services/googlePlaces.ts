@@ -3,10 +3,10 @@ import { logger } from '../utils/logger';
 import { GooglePlacesData } from '../types/lead';
 import { retryWithBackoff, sleep } from '../utils/retry';
 
-const GOOGLE_PLACES_API_BASE = 'https://maps.googleapis.com/maps/api/place';
+// Google Places API (New) base URL
+const GOOGLE_PLACES_API_BASE = 'https://places.googleapis.com/v1';
 
 export class GooglePlacesService {
-  private apiKey: string;
   private client: AxiosInstance;
   private lastRequestTime: number = 0;
   private minRequestInterval: number = 1000; // 1 request per second
@@ -15,10 +15,13 @@ export class GooglePlacesService {
     if (!apiKey) {
       throw new Error('GOOGLE_PLACES_API_KEY is required');
     }
-    this.apiKey = apiKey;
     this.client = axios.create({
       baseURL: GOOGLE_PLACES_API_BASE,
       timeout: 10000,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': apiKey,
+      },
     });
   }
 
@@ -135,25 +138,27 @@ export class GooglePlacesService {
   private async searchForPlace(query: string): Promise<string | null> {
     return retryWithBackoff(
       async () => {
-        const response = await this.client.get('/findplacefromtext/json', {
-          params: {
-            input: query,
-            inputtype: 'textquery',
-            fields: 'place_id',
-            key: this.apiKey,
+        // Using Places API (New) Text Search endpoint
+        const response = await this.client.post(
+          '/places:searchText',
+          {
+            textQuery: query,
+            pageSize: 1, // We only need the top result
           },
-        });
+          {
+            headers: {
+              'X-Goog-FieldMask': 'places.id',
+            },
+          }
+        );
 
-        if (response.data.status === 'OK' && response.data.candidates?.length > 0) {
-          return response.data.candidates[0].place_id;
+        // New API returns places array directly (no status field)
+        if (response.data.places && response.data.places.length > 0) {
+          return response.data.places[0].id;
         }
 
-        if (response.data.status === 'ZERO_RESULTS') {
-          logger.info('No place found for query', { query });
-          return null;
-        }
-
-        throw new Error(`Google Places API error: ${response.data.status}`);
+        logger.info('No place found for query', { query });
+        return null;
       },
       { maxRetries: 3, initialDelayMs: 1000 },
       'google-places-find'
@@ -165,51 +170,63 @@ export class GooglePlacesService {
 
     return retryWithBackoff(
       async () => {
-        const response = await this.client.get('/details/json', {
-          params: {
-            place_id: placeId,
-            fields: 'name,types,rating,user_ratings_total,formatted_address,business_status,website,formatted_phone_number,address_components',
-            key: this.apiKey,
+        // Using Places API (New) Place Details endpoint
+        // Field mask specifies which fields to return
+        const fieldMask = [
+          'displayName',
+          'types',
+          'rating',
+          'userRatingCount',
+          'formattedAddress',
+          'businessStatus',
+          'websiteUri',
+          'nationalPhoneNumber',
+          'addressComponents',
+        ].join(',');
+
+        const response = await this.client.get(`/places/${placeId}`, {
+          headers: {
+            'X-Goog-FieldMask': fieldMask,
           },
         });
 
-        if (response.data.status !== 'OK') {
-          if (response.data.status === 'NOT_FOUND') {
-            logger.warn('Place not found', { placeId });
-            return null;
-          }
-          throw new Error(`Google Places API error: ${response.data.status}`);
+        // New API returns the place directly (no wrapper object)
+        const result = response.data;
+
+        // If no data returned, place not found
+        if (!result || Object.keys(result).length === 0) {
+          logger.warn('Place not found', { placeId });
+          return null;
         }
 
-        const result = response.data.result;
-
         // Parse address components to extract city, state, zip
+        // New API uses camelCase field names
         let city: string | undefined;
         let state: string | undefined;
         let zip: string | undefined;
 
-        if (result.address_components) {
-          for (const component of result.address_components) {
-            if (component.types.includes('locality')) {
-              city = component.long_name;
-            } else if (component.types.includes('administrative_area_level_1')) {
-              state = component.short_name; // Use short name for state (e.g., "TX" instead of "Texas")
-            } else if (component.types.includes('postal_code')) {
-              zip = component.long_name;
+        if (result.addressComponents) {
+          for (const component of result.addressComponents) {
+            if (component.types?.includes('locality')) {
+              city = component.longText;
+            } else if (component.types?.includes('administrative_area_level_1')) {
+              state = component.shortText; // Use short name for state (e.g., "TX" instead of "Texas")
+            } else if (component.types?.includes('postal_code')) {
+              zip = component.longText;
             }
           }
         }
 
         return {
           place_id: placeId,
-          gmb_name: result.name || undefined,
+          gmb_name: result.displayName?.text || undefined,
           gmb_primary_category: result.types?.[0] || undefined,
           gmb_rating: result.rating || undefined,
-          gmb_review_count: result.user_ratings_total || undefined,
-          gmb_address: result.formatted_address || undefined,
-          gmb_is_operational: result.business_status === 'OPERATIONAL',
-          gmb_website: result.website || undefined,
-          gmb_phone: result.formatted_phone_number || undefined,
+          gmb_review_count: result.userRatingCount || undefined,
+          gmb_address: result.formattedAddress || undefined,
+          gmb_is_operational: result.businessStatus === 'OPERATIONAL',
+          gmb_website: result.websiteUri || undefined,
+          gmb_phone: result.nationalPhoneNumber || undefined,
           gmb_city: city,
           gmb_state: state,
           gmb_zip: zip,
