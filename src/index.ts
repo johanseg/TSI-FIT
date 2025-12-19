@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import { Pool } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
@@ -298,16 +299,20 @@ app.get('/api/lead/:salesforceLeadId', async (req, res) => {
   try {
     const { salesforceLeadId } = req.params;
 
-    // First check local database for existing enrichment
-    // Join with leads table since lead_enrichments.lead_id is a UUID foreign key,
-    // but we're looking up by Salesforce Lead ID
-    const localResult = await pool.query(
-      `SELECT le.* FROM lead_enrichments le
-       JOIN leads l ON le.lead_id = l.id
-       WHERE l.salesforce_lead_id = $1
-       ORDER BY le.created_at DESC LIMIT 1`,
-      [salesforceLeadId]
-    );
+    // First check local database for existing enrichment (if available)
+    let localEnrichment = null;
+    try {
+      const localResult = await pool.query(
+        `SELECT le.* FROM lead_enrichments le
+         JOIN leads l ON le.lead_id = l.id
+         WHERE l.salesforce_lead_id = $1
+         ORDER BY le.created_at DESC LIMIT 1`,
+        [salesforceLeadId]
+      );
+      localEnrichment = localResult.rows[0] || null;
+    } catch (dbError) {
+      logger.warn('Local database not available', { error: dbError instanceof Error ? dbError.message : String(dbError) });
+    }
 
     // Then fetch from Salesforce
     let salesforceLead = null;
@@ -316,7 +321,7 @@ app.get('/api/lead/:salesforceLeadId', async (req, res) => {
       const query = `
         SELECT Id, Company, Website, Phone, City, State, LeadSource,
                FirstName, LastName, Email, Status, CreatedDate,
-               Score__c, Has_Website__c, Has_GMB__c, GMB_URL__c,
+               Fit_Score__c, Has_Website__c, Has_GMB__c, GMB_URL__c,
                Number_of_Employees__c, Number_of_GBP_Reviews__c,
                Number_of_Years_in_Business__c, Location_Type__c
         FROM Lead
@@ -332,7 +337,7 @@ app.get('/api/lead/:salesforceLeadId', async (req, res) => {
 
     res.json({
       salesforce: salesforceLead,
-      localEnrichment: localResult.rows[0] || null,
+      localEnrichment,
     });
   } catch (error) {
     logger.error('Failed to lookup lead', { error });
