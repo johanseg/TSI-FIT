@@ -528,7 +528,7 @@ export function formatForSalesforceUpdate(
   website?: string,
   _phone?: string, // Unused - phone is preserved from original lead
   filledFromGMB?: GMBFilledFields,
-  _fitScore?: number,
+  fitScore?: number,
   gmbTypes?: string[]
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {
@@ -543,8 +543,10 @@ export function formatForSalesforceUpdate(
     Spending_on_Marketing__c: fields.spending_on_marketing,
   };
 
-  // Note: We don't update Score__c - it's read-only (used to identify if lead was scored)
-  // The fit score is calculated but not written to Salesforce via this field
+  // Add Fit_Score__c if provided
+  if (fitScore !== undefined && fitScore !== null) {
+    result.Fit_Score__c = fitScore;
+  }
 
   // Always overwrite Lead_Vertical__c from GMB types if we can determine it
   // GMB data is considered authoritative
