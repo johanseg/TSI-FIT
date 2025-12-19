@@ -453,6 +453,7 @@ app.post('/api/enrich-by-id', async (req, res) => {
 
       // Step 6: Update Salesforce if requested
       let salesforceUpdated = false;
+      let salesforceError: string | undefined;
       if (update_salesforce) {
         try {
           // Update with SF-aligned fields (GMB/Clay data is authoritative and overwrites existing)
@@ -464,7 +465,19 @@ app.post('/api/enrich-by-id', async (req, res) => {
             fitScoreResult.fit_score,
             enrichmentData.google_places?.gmb_types
           );
-          salesforceUpdated = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult, sfUpdateFields);
+          const sfResult = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult, sfUpdateFields);
+          salesforceUpdated = sfResult.success;
+
+          if (!sfResult.success && sfResult.error) {
+            salesforceError = `${sfResult.error.code}: ${sfResult.error.message}`;
+            logger.warn('Salesforce update failed', {
+              requestId,
+              leadId: salesforce_lead_id,
+              errorCode: sfResult.error.code,
+              errorMessage: sfResult.error.message,
+              isRetryable: sfResult.error.isRetryable,
+            });
+          }
 
           if (Object.keys(filledFromGMB).length > 0) {
             logger.info('Filled missing lead fields from GMB', {
@@ -473,7 +486,8 @@ app.post('/api/enrich-by-id', async (req, res) => {
             });
           }
         } catch (sfError) {
-          logger.error('Failed to update Salesforce', { requestId, error: sfError });
+          logger.error('Failed to update Salesforce (exception)', { requestId, error: sfError });
+          salesforceError = sfError instanceof Error ? sfError.message : String(sfError);
         }
       }
 
@@ -544,6 +558,7 @@ app.post('/api/enrich-by-id', async (req, res) => {
           clay: enrichmentData.clay || null,
         },
         salesforce_updated: salesforceUpdated,
+        salesforce_error: salesforceError,
         duration_ms: duration,
       });
     } finally {
@@ -718,19 +733,22 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
         );
 
         // Step 6: Update Salesforce
-        const updated = await salesforce.updateLead(lead.id, enrichmentData, fitScoreResult, sfUpdateFields);
+        const sfResult = await salesforce.updateLead(lead.id, enrichmentData, fitScoreResult, sfUpdateFields);
 
-        if (updated) {
+        if (sfResult.success) {
           results.push({
             id: lead.id,
             success: true,
             fit_score: fitScoreResult.fit_score,
           });
         } else {
+          const errorMsg = sfResult.error
+            ? `${sfResult.error.code}: ${sfResult.error.message}`
+            : 'Failed to update Salesforce';
           results.push({
             id: lead.id,
             success: false,
-            error: 'Failed to update Salesforce',
+            error: errorMsg,
           });
         }
 
@@ -751,7 +769,7 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
               enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
               fitScoreResult.fit_score,
               JSON.stringify(fitScoreResult.score_breakdown),
-              updated,
+              sfResult.success,
             ]
           );
         } catch (dbError) {
