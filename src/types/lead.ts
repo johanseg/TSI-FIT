@@ -33,12 +33,51 @@ export interface GooglePlacesData {
   gmb_types?: string[]; // For determining commercial vs residential
 }
 
+// Legacy Clay interface - kept for backwards compatibility with existing DB records
 export interface ClayData {
   employee_estimate?: number;
   revenue_estimate_range?: string;
   year_founded?: number;
   years_in_business?: number;
   industry?: string;
+}
+
+// People Data Labs Company Enrichment data
+export interface PDLCompanyData {
+  // Match metadata
+  pdl_id?: string;
+  likelihood?: number; // 1-10 confidence score
+
+  // Years in business (from founded year)
+  year_founded?: number;
+  years_in_business?: number;
+
+  // Employee data
+  employee_count?: number; // Exact count from PDL profile analysis
+  size_range?: string; // Self-reported range, e.g., "11-50", "51-200"
+
+  // Industry classification
+  industry?: string; // Primary industry
+  industry_v2?: string; // Expanded industry classification
+  naics_codes?: Array<{
+    code?: string;
+    sector?: string;
+    industry?: string;
+  }>;
+
+  // Revenue
+  inferred_revenue?: string; // e.g., "$1M-$10M", "$10M-$50M"
+
+  // Location / HQ validation
+  headquarters?: {
+    locality?: string;
+    region?: string;
+    country?: string;
+    postal_code?: string;
+  };
+
+  // Website confidence
+  website_confirmed?: string;
 }
 
 export interface WebsiteTechData {
@@ -53,7 +92,8 @@ export interface WebsiteTechData {
 
 export interface EnrichmentData {
   google_places?: GooglePlacesData;
-  clay?: ClayData;
+  clay?: ClayData; // Legacy - kept for backwards compatibility
+  pdl?: PDLCompanyData; // People Data Labs Company Enrichment
   website_tech?: WebsiteTechData;
 }
 
@@ -140,7 +180,8 @@ export interface LeadEnrichmentRecord {
   job_id: string;
   enrichment_status: 'pending' | 'success' | 'partial' | 'failed';
   google_places_data?: GooglePlacesData;
-  clay_data?: ClayData;
+  clay_data?: ClayData; // Legacy
+  pdl_data?: PDLCompanyData; // People Data Labs
   website_tech_data?: WebsiteTechData;
   fit_score?: number;
   score_breakdown?: ScoreBreakdown;

@@ -3,9 +3,15 @@ import {
   FitScoreResult,
   ScoreBreakdown,
 } from '../types/lead';
+import { PeopleDataLabsService } from './peopleDataLabs';
 
 /**
  * Calculate Fit Score based on enrichment data
+ *
+ * Data sources (in priority order):
+ * - PDL (People Data Labs): employees, years in business, industry, revenue
+ * - Google Places: reviews, physical location, website
+ * - Website Tech: pixel detection for sophistication penalty
  *
  * Solvency Score (0-85):
  * - Website: +10 if present
@@ -45,12 +51,18 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
 
   // Calculate Solvency Score (0-80)
   const googlePlaces = enrichmentData.google_places;
-  const clay = enrichmentData.clay;
+  const pdl = enrichmentData.pdl;
+  const clay = enrichmentData.clay; // Legacy fallback
   const websiteTech = enrichmentData.website_tech;
 
   // Website: +10 if present
-  // Consider website present if we have website tech data, Google Places has website, or GMB profile exists
-  if (websiteTech?.has_meta_pixel !== undefined || googlePlaces?.gmb_website || googlePlaces?.place_id) {
+  // Consider website present if we have website tech data, Google Places has website, PDL confirmed, or GMB profile exists
+  if (
+    websiteTech?.has_meta_pixel !== undefined ||
+    googlePlaces?.gmb_website ||
+    googlePlaces?.place_id ||
+    pdl?.website_confirmed
+  ) {
     breakdown.solvency_score.website = 10;
   }
 
@@ -67,7 +79,8 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
   }
 
   // Years in business: +0 (<2), +10 (2-3), +15 (4-7), +20 (≥8)
-  const yearsInBusiness = clay?.years_in_business ?? 0;
+  // Priority: PDL > Clay (legacy)
+  const yearsInBusiness = pdl?.years_in_business ?? clay?.years_in_business ?? 0;
   if (yearsInBusiness >= 8) {
     breakdown.solvency_score.years_in_business = 20;
   } else if (yearsInBusiness >= 4) {
@@ -79,7 +92,17 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
   }
 
   // Employees: +0 (<3), +10 (3-5), +15 (6-15), +20 (≥16)
-  const employees = clay?.employee_estimate ?? 0;
+  // Priority: PDL employee_count > PDL size_range (parsed) > Clay (legacy)
+  let employees = 0;
+  if (pdl?.employee_count !== undefined) {
+    employees = pdl.employee_count;
+  } else if (pdl?.size_range) {
+    // Parse employee count from size range (e.g., "11-50" → 30)
+    employees = PeopleDataLabsService.parseEmployeeCountFromSize(pdl.size_range) ?? 0;
+  } else if (clay?.employee_estimate !== undefined) {
+    employees = clay.employee_estimate;
+  }
+
   if (employees >= 16) {
     breakdown.solvency_score.employees = 20;
   } else if (employees >= 6) {

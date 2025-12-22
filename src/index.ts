@@ -8,7 +8,7 @@ import path from 'path';
 
 // Services
 import { GooglePlacesService } from './services/googlePlaces';
-import { ClayService } from './services/clay';
+import { PeopleDataLabsService } from './services/peopleDataLabs';
 import { WebsiteTechService } from './services/websiteTech';
 import { calculateFitScore } from './services/fitScore';
 import { SalesforceService } from './services/salesforce';
@@ -162,14 +162,14 @@ app.get('/api/setup/status', async (_req, res) => {
       database: dbStatus,
       salesforce: sfStatus,
       googlePlaces: { configured: !!process.env.GOOGLE_PLACES_API_KEY },
-      clay: { configured: !!process.env.CLAY_API_KEY },
+      peopleDataLabs: { configured: !!process.env.PDL_API_KEY },
     };
 
     // Environment info (masked)
     const envConfig = {
       DATABASE_URL: process.env.DATABASE_URL ? '***configured***' : 'NOT SET',
       GOOGLE_PLACES_API_KEY: process.env.GOOGLE_PLACES_API_KEY ? '***configured***' : 'NOT SET',
-      CLAY_API_KEY: process.env.CLAY_API_KEY ? '***configured***' : 'NOT SET',
+      PDL_API_KEY: process.env.PDL_API_KEY ? '***configured***' : 'NOT SET',
       API_KEY: process.env.API_KEY ? '***configured***' : 'NOT SET',
       SFDC_LOGIN_URL: process.env.SFDC_LOGIN_URL || 'https://login.salesforce.com',
       SFDC_USERNAME: process.env.SFDC_USERNAME ? '***configured***' : 'NOT SET',
@@ -382,7 +382,7 @@ app.post('/api/enrich-by-id', async (req, res) => {
 
     // Initialize services
     const googlePlaces = new GooglePlacesService(process.env.GOOGLE_PLACES_API_KEY || '');
-    const clay = new ClayService(process.env.CLAY_API_KEY || '');
+    const pdl = new PeopleDataLabsService(process.env.PDL_API_KEY || '');
     const websiteTech = new WebsiteTechService();
 
     try {
@@ -432,10 +432,10 @@ app.post('/api/enrich-by-id', async (req, res) => {
         }
       }
 
-      // Step 3: Clay enrichment (for employees, years in business, business license)
+      // Step 3: PDL Company Enrichment (for employees, years in business, industry, revenue)
       try {
-        logger.info('Enriching with Clay', { requestId });
-        const clayData = await clay.enrichLead({
+        logger.info('Enriching with People Data Labs', { requestId });
+        const pdlData = await pdl.enrichCompany({
           lead_id: requestId,
           business_name: lead.Company,
           website: websiteForTech,
@@ -443,11 +443,11 @@ app.post('/api/enrich-by-id', async (req, res) => {
           city: lead.City || filledFromGMB.city,
           state: lead.State || filledFromGMB.state,
         });
-        if (clayData) {
-          enrichmentData.clay = clayData;
+        if (pdlData) {
+          enrichmentData.pdl = pdlData;
         }
       } catch (error) {
-        logger.warn('Clay enrichment failed', { requestId, error });
+        logger.warn('PDL enrichment failed', { requestId, error });
       }
 
       // Step 4: Calculate Fit Score
@@ -497,14 +497,14 @@ app.post('/api/enrich-by-id', async (req, res) => {
       }
 
       // Store enrichment record with SF-aligned fields
-      const enrichmentStatus = enrichmentData.google_places || enrichmentData.clay || enrichmentData.website_tech
+      const enrichmentStatus = enrichmentData.google_places || enrichmentData.pdl || enrichmentData.website_tech
         ? 'completed' : 'no_data';
 
       try {
         await pool.query(
           `INSERT INTO lead_enrichments (
             salesforce_lead_id, job_id, enrichment_status,
-            google_places_data, clay_data, website_tech_data,
+            google_places_data, pdl_data, website_tech_data,
             fit_score, score_breakdown, salesforce_updated,
             has_website, number_of_employees, number_of_gbp_reviews,
             number_of_years_in_business, has_gmb, gmb_url,
@@ -515,7 +515,7 @@ app.post('/api/enrich-by-id', async (req, res) => {
             requestId,
             enrichmentStatus,
             enrichmentData.google_places ? JSON.stringify(enrichmentData.google_places) : null,
-            enrichmentData.clay ? JSON.stringify(enrichmentData.clay) : null,
+            enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
             enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
             fitScoreResult.fit_score,
             JSON.stringify(fitScoreResult.score_breakdown),
@@ -560,7 +560,7 @@ app.post('/api/enrich-by-id', async (req, res) => {
           score_breakdown: fitScoreResult.score_breakdown,
           google_places: enrichmentData.google_places || null,
           website_tech: enrichmentData.website_tech || null,
-          clay: enrichmentData.clay || null,
+          pdl: enrichmentData.pdl || null,
         },
         salesforce_updated: salesforceUpdated,
         salesforce_error: salesforceError,
@@ -663,7 +663,7 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
 
       // Initialize services
       const googlePlaces = new GooglePlacesService(process.env.GOOGLE_PLACES_API_KEY || '');
-      const clay = new ClayService(process.env.CLAY_API_KEY || '');
+      const pdl = new PeopleDataLabsService(process.env.PDL_API_KEY || '');
       const websiteTech = new WebsiteTechService();
 
       try {
@@ -706,9 +706,9 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
           }
         }
 
-        // Step 3: Clay enrichment
+        // Step 3: PDL Company Enrichment
         try {
-          const clayData = await clay.enrichLead({
+          const pdlData = await pdl.enrichCompany({
             lead_id: requestId,
             business_name: lead.company,
             website: websiteForTech,
@@ -716,11 +716,11 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
             city: lead.city || filledFromGMB.city,
             state: lead.state || filledFromGMB.state,
           });
-          if (clayData) {
-            enrichmentData.clay = clayData;
+          if (pdlData) {
+            enrichmentData.pdl = pdlData;
           }
         } catch (error) {
-          logger.warn('Clay enrichment failed', { leadId: lead.id, error });
+          logger.warn('PDL enrichment failed', { leadId: lead.id, error });
         }
 
         // Step 4: Calculate Fit Score
@@ -762,7 +762,7 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
           await pool.query(
             `INSERT INTO lead_enrichments (
               salesforce_lead_id, job_id, enrichment_status,
-              google_places_data, clay_data, website_tech_data,
+              google_places_data, pdl_data, website_tech_data,
               fit_score, score_breakdown, salesforce_updated
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
             [
@@ -770,7 +770,7 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
               requestId,
               'completed',
               enrichmentData.google_places ? JSON.stringify(enrichmentData.google_places) : null,
-              enrichmentData.clay ? JSON.stringify(enrichmentData.clay) : null,
+              enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
               enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
               fitScoreResult.fit_score,
               JSON.stringify(fitScoreResult.score_breakdown),
@@ -824,7 +824,7 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
 
     // Initialize services
     const googlePlaces = new GooglePlacesService(process.env.GOOGLE_PLACES_API_KEY || '');
-    const clay = new ClayService(process.env.CLAY_API_KEY || '');
+    const pdl = new PeopleDataLabsService(process.env.PDL_API_KEY || '');
     const websiteTech = new WebsiteTechService();
 
     try {
@@ -878,10 +878,10 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
         }
       }
 
-      // Step 3: Clay enrichment (for employees, years in business, business license)
+      // Step 3: PDL Company Enrichment (for employees, years in business, industry, revenue)
       try {
-        logger.info('Enriching with Clay', { requestId });
-        const clayData = await clay.enrichLead({
+        logger.info('Enriching with People Data Labs', { requestId });
+        const pdlData = await pdl.enrichCompany({
           lead_id: requestId,
           business_name: payload.business_name,
           website: websiteForTech,
@@ -889,11 +889,11 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
           city: payload.city || filledFromGMB.city,
           state: payload.state || filledFromGMB.state,
         });
-        if (clayData) {
-          enrichmentData.clay = clayData;
+        if (pdlData) {
+          enrichmentData.pdl = pdlData;
         }
       } catch (error) {
-        logger.warn('Clay enrichment failed', {
+        logger.warn('PDL enrichment failed', {
           requestId,
           error: error instanceof Error ? error.message : String(error),
         });
@@ -908,7 +908,7 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
       // Determine enrichment status
       const hasAnyEnrichment =
         enrichmentData.google_places ||
-        enrichmentData.clay ||
+        enrichmentData.pdl ||
         enrichmentData.website_tech;
 
       const enrichmentStatus = hasAnyEnrichment ? 'completed' : 'no_data';
@@ -918,7 +918,7 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
         await pool.query(
           `INSERT INTO lead_enrichments (
             salesforce_lead_id, job_id, enrichment_status,
-            google_places_data, clay_data, website_tech_data,
+            google_places_data, pdl_data, website_tech_data,
             fit_score, score_breakdown,
             has_website, number_of_employees, number_of_gbp_reviews,
             number_of_years_in_business, has_gmb, gmb_url,
@@ -929,7 +929,7 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
             requestId,
             enrichmentStatus,
             enrichmentData.google_places ? JSON.stringify(enrichmentData.google_places) : null,
-            enrichmentData.clay ? JSON.stringify(enrichmentData.clay) : null,
+            enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
             enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
             fitScoreResult.fit_score,
             JSON.stringify(fitScoreResult.score_breakdown),
@@ -974,8 +974,12 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
         enrichment_status: enrichmentStatus,
         fit_score: fitScoreResult.fit_score,
         // Raw enrichment data (for reference/debugging)
-        employee_estimate: enrichmentData.clay?.employee_estimate ?? null,
-        years_in_business: enrichmentData.clay?.years_in_business ?? null,
+        employee_count: enrichmentData.pdl?.employee_count ?? null,
+        employee_size_range: enrichmentData.pdl?.size_range ?? null,
+        years_in_business: enrichmentData.pdl?.years_in_business ?? null,
+        year_founded: enrichmentData.pdl?.year_founded ?? null,
+        industry: enrichmentData.pdl?.industry ?? null,
+        inferred_revenue: enrichmentData.pdl?.inferred_revenue ?? null,
         google_reviews_count: enrichmentData.google_places?.gmb_review_count ?? null,
         google_rating: enrichmentData.google_places?.gmb_rating ?? null,
         has_physical_location: enrichmentData.google_places?.gmb_is_operational ?? false,
@@ -1086,6 +1090,6 @@ app.listen(PORT, () => {
     databaseConfigured: !!process.env.DATABASE_URL,
     salesforceConfigured: !!process.env.SFDC_USERNAME,
     googlePlacesConfigured: !!process.env.GOOGLE_PLACES_API_KEY,
-    clayConfigured: !!process.env.CLAY_API_KEY,
+    pdlConfigured: !!process.env.PDL_API_KEY,
   });
 });
