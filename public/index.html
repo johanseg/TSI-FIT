@@ -1271,12 +1271,19 @@
             </div>
             ` : ''}
 
-            ${data.enrichment.clay ? `
+            ${data.enrichment.pdl ? `
             <div class="result-section">
-              <h5>Clay Data</h5>
+              <h5>People Data Labs Company Data</h5>
               <div class="result-grid">
-                <div class="result-item"><div class="label">Employees</div><div class="value">${data.enrichment.clay.employee_estimate ?? '-'}</div></div>
-                <div class="result-item"><div class="label">Years in Business</div><div class="value">${data.enrichment.clay.years_in_business ?? '-'}</div></div>
+                <div class="result-item"><div class="label">Match Confidence</div><div class="value">${data.enrichment.pdl.likelihood ? `${data.enrichment.pdl.likelihood}/10` : '-'}</div></div>
+                <div class="result-item"><div class="label">Year Founded</div><div class="value">${data.enrichment.pdl.year_founded ?? '-'}</div></div>
+                <div class="result-item"><div class="label">Years in Business</div><div class="value">${data.enrichment.pdl.years_in_business ?? '-'}</div></div>
+                <div class="result-item"><div class="label">Employee Count</div><div class="value">${data.enrichment.pdl.employee_count ?? '-'}</div></div>
+                <div class="result-item"><div class="label">Size Range</div><div class="value">${data.enrichment.pdl.size_range ?? '-'}</div></div>
+                <div class="result-item"><div class="label">Industry</div><div class="value">${data.enrichment.pdl.industry ?? '-'}</div></div>
+                <div class="result-item"><div class="label">Inferred Revenue</div><div class="value">${data.enrichment.pdl.inferred_revenue ?? '-'}</div></div>
+                <div class="result-item"><div class="label">HQ Location</div><div class="value">${data.enrichment.pdl.headquarters ? [data.enrichment.pdl.headquarters.locality, data.enrichment.pdl.headquarters.region].filter(Boolean).join(', ') : '-'}</div></div>
+                <div class="result-item"><div class="label">Website Confirmed</div><div class="value">${data.enrichment.pdl.website_confirmed ? '<span class="badge success">Yes</span>' : '<span class="badge info">N/A</span>'}</div></div>
               </div>
             </div>
             ` : ''}
@@ -1293,6 +1300,10 @@
                   <div class="value">${data.enrichment.google_places ? '<span class="badge success">Yes</span>' : '<span class="badge warning">No</span>'}</div>
                 </div>
                 <div class="result-item">
+                  <div class="label">PDL Company Match</div>
+                  <div class="value">${data.enrichment.pdl ? '<span class="badge success">Yes</span>' : '<span class="badge warning">No</span>'}</div>
+                </div>
+                <div class="result-item">
                   <div class="label">Address Updated</div>
                   <div class="value">${(data.enrichment.google_places?.gmb_city || data.enrichment.google_places?.gmb_state) ? '<span class="badge success">Yes</span>' : '<span class="badge info">No</span>'}</div>
                 </div>
@@ -1302,6 +1313,18 @@
                     ? (data.enrichment.google_places.gmb_review_count >= 14
                       ? '<span class="badge success">14+ reviews</span>'
                       : '<span class="badge warning">Below 14</span>')
+                    : '<span class="badge info">N/A</span>'}</div>
+                </div>
+                <div class="result-item">
+                  <div class="label">Years in Business</div>
+                  <div class="value">${data.enrichment.pdl?.years_in_business != null
+                    ? '<span class="badge success">' + data.enrichment.pdl.years_in_business + ' yrs</span>'
+                    : '<span class="badge info">N/A</span>'}</div>
+                </div>
+                <div class="result-item">
+                  <div class="label">Employee Data</div>
+                  <div class="value">${(data.enrichment.pdl?.employee_count || data.enrichment.pdl?.size_range)
+                    ? '<span class="badge success">' + (data.enrichment.pdl.employee_count || data.enrichment.pdl.size_range) + '</span>'
                     : '<span class="badge info">N/A</span>'}</div>
                 </div>
               </div>
@@ -1707,11 +1730,11 @@
                     </td>
                   </tr>
                   <tr>
-                    <td><strong>Clay API</strong></td>
+                    <td><strong>People Data Labs API</strong></td>
                     <td>
                       <div class="status-indicator">
-                        <span class="status-dot ${status.services.clay.configured ? 'green' : 'yellow'}"></span>
-                        ${status.services.clay.configured ? 'Configured' : 'Not Configured'}
+                        <span class="status-dot ${status.services.peopleDataLabs?.configured ? 'green' : 'yellow'}"></span>
+                        ${status.services.peopleDataLabs?.configured ? 'Configured' : 'Not Configured'}
                       </div>
                     </td>
                   </tr>
