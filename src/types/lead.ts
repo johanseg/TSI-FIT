@@ -106,13 +106,9 @@ export interface ScoreBreakdown {
     physical_location: number;
     total: number;
   };
-  sophistication_penalty: {
-    meta_pixel: number;
-    ga4_google_ads: number;
-    multiple_pixels: number;
-    marketing_automation: number;
-    total_before_cap: number;
-    capped_total: number;
+  pixel_bonus: {
+    pixel_count: number;
+    bonus: number; // +5 for 1 pixel, +10 for 2+ pixels
   };
   final_score: number;
 }

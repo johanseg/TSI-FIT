@@ -11,22 +11,20 @@ import { PeopleDataLabsService } from './peopleDataLabs';
  * Data sources (in priority order):
  * - PDL (People Data Labs): employees, years in business, industry, revenue
  * - Google Places: reviews, physical location, website
- * - Website Tech: pixel detection for sophistication penalty
+ * - Website Tech: pixel detection for bonus points
  *
  * Solvency Score (0-85):
  * - Website: +10 if present
  * - Reviews: +0 (<5), +10 (5-14), +20 (15-29), +25 (≥30)
  * - Years in business: +0 (<2), +10 (2-3), +15 (4-7), +20 (≥8)
  * - Employees: +0 (<3), +10 (3-5), +15 (6-15), +20 (≥16)
- * - Physical location: +10 for 1 location, +15 for multiple locations
+ * - Physical location: +10 for 1 location
  *
- * Sophistication Penalty (capped at -10):
- * - Meta Pixel: -3
- * - GA4/Google Ads: -3
- * - Multiple pixels (≥2): -4
- * - Marketing automation: -3
+ * Pixel Bonus (0-10):
+ * - 1 pixel: +5
+ * - 2+ pixels: +10
  *
- * Final: clamp(SolvencyScore + Penalty, 0, 100)
+ * Final: clamp(SolvencyScore + PixelBonus, 0, 100)
  */
 export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResult {
   const breakdown: ScoreBreakdown = {
@@ -38,18 +36,14 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
       physical_location: 0,
       total: 0,
     },
-    sophistication_penalty: {
-      meta_pixel: 0,
-      ga4_google_ads: 0,
-      multiple_pixels: 0,
-      marketing_automation: 0,
-      total_before_cap: 0,
-      capped_total: 0,
+    pixel_bonus: {
+      pixel_count: 0,
+      bonus: 0,
     },
     final_score: 0,
   };
 
-  // Calculate Solvency Score (0-80)
+  // Calculate Solvency Score (0-85)
   const googlePlaces = enrichmentData.google_places;
   const pdl = enrichmentData.pdl;
   const clay = enrichmentData.clay; // Legacy fallback
@@ -94,12 +88,14 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
   // Employees: +0 (<3), +10 (3-5), +15 (6-15), +20 (≥16)
   // Priority: PDL employee_count > PDL size_range (parsed) > Clay (legacy)
   let employees = 0;
-  if (pdl?.employee_count !== undefined) {
+  if (pdl?.employee_count != null && pdl.employee_count > 0) {
+    // Use exact employee count if available and valid
     employees = pdl.employee_count;
   } else if (pdl?.size_range) {
-    // Parse employee count from size range (e.g., "11-50" → 30)
+    // Parse employee count from size range (e.g., "1-10" → 6, "11-50" → 30)
     employees = PeopleDataLabsService.parseEmployeeCountFromSize(pdl.size_range) ?? 0;
-  } else if (clay?.employee_estimate !== undefined) {
+  } else if (clay?.employee_estimate != null && clay.employee_estimate > 0) {
+    // Legacy Clay fallback
     employees = clay.employee_estimate;
   }
 
@@ -113,9 +109,7 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     breakdown.solvency_score.employees = 0;
   }
 
-  // Physical location: +10 for 1 location, +15 for multiple locations
-  // Note: Currently we can only detect single GMB location, so +10 max
-  // TODO: Add multi-location detection when data source is available
+  // Physical location: +10 if operational GMB with address
   if (googlePlaces?.gmb_is_operational === true && googlePlaces?.gmb_address) {
     breakdown.solvency_score.physical_location = 10;
   }
@@ -127,43 +121,19 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     breakdown.solvency_score.employees +
     breakdown.solvency_score.physical_location;
 
-  // Calculate Sophistication Penalty (capped at -10)
+  // Calculate Pixel Bonus (0-10)
+  // 1 pixel: +5, 2+ pixels: +10
   if (websiteTech) {
-    // Meta Pixel: -3
-    if (websiteTech.has_meta_pixel) {
-      breakdown.sophistication_penalty.meta_pixel = -3;
-    }
-
-    // GA4/Google Ads: -3
-    if (websiteTech.has_ga4 || websiteTech.has_google_ads_tag) {
-      breakdown.sophistication_penalty.ga4_google_ads = -3;
-    }
-
-    // Multiple pixels (≥2): -4
+    breakdown.pixel_bonus.pixel_count = websiteTech.pixel_count;
     if (websiteTech.pixel_count >= 2) {
-      breakdown.sophistication_penalty.multiple_pixels = -4;
-    }
-
-    // Marketing automation (HubSpot): -3
-    if (websiteTech.has_hubspot) {
-      breakdown.sophistication_penalty.marketing_automation = -3;
+      breakdown.pixel_bonus.bonus = 10;
+    } else if (websiteTech.pixel_count === 1) {
+      breakdown.pixel_bonus.bonus = 5;
     }
   }
 
-  breakdown.sophistication_penalty.total_before_cap =
-    breakdown.sophistication_penalty.meta_pixel +
-    breakdown.sophistication_penalty.ga4_google_ads +
-    breakdown.sophistication_penalty.multiple_pixels +
-    breakdown.sophistication_penalty.marketing_automation;
-
-  // Cap penalty at -10
-  breakdown.sophistication_penalty.capped_total = Math.max(
-    breakdown.sophistication_penalty.total_before_cap,
-    -10
-  );
-
-  // Calculate final score: clamp(SolvencyScore + Penalty, 0, 100)
-  const rawScore = breakdown.solvency_score.total + breakdown.sophistication_penalty.capped_total;
+  // Calculate final score: clamp(SolvencyScore + PixelBonus, 0, 100)
+  const rawScore = breakdown.solvency_score.total + breakdown.pixel_bonus.bonus;
   breakdown.final_score = Math.max(0, Math.min(100, rawScore));
 
   return {
@@ -171,4 +141,3 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     score_breakdown: breakdown,
   };
 }
-
