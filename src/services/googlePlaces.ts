@@ -353,6 +353,7 @@ export class GooglePlacesService {
     const normalizePhone = (p?: string) => p?.replace(/\D/g, '') || '';
 
     // Check phone match (worth 2 points - very reliable)
+    // Phone mismatch is also a strong negative signal
     if (input.phone && gmbResult.gmb_phone) {
       const inputPhone = normalizePhone(input.phone);
       const gmbPhone = normalizePhone(gmbResult.gmb_phone);
@@ -360,6 +361,14 @@ export class GooglePlacesService {
       if (inputPhone.length >= 10 && gmbPhone.length >= 10) {
         if (inputPhone.includes(gmbPhone.slice(-10)) || gmbPhone.includes(inputPhone.slice(-10))) {
           matchedFields.push('phone');
+        } else {
+          // Phone numbers don't match - this is a strong negative signal
+          // Different phone = likely different business
+          logger.warn('Phone mismatch detected - likely wrong GMB match', {
+            inputPhone: input.phone,
+            gmbPhone: gmbResult.gmb_phone,
+          });
+          return { score: -10, matchedFields: ['PHONE_MISMATCH'] };
         }
       }
     }
