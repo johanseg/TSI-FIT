@@ -630,6 +630,212 @@ app.get('/api/dashboard/unenriched', async (req, res) => {
   }
 });
 
+// Enrichment KPIs endpoint - today, yesterday, this week, last week stats
+app.get('/api/dashboard/enrichment-kpis', async (_req, res) => {
+  try {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+    const yesterdayEnd = new Date(todayStart.getTime() - 1);
+
+    // Calculate this week (Monday to now)
+    const dayOfWeek = now.getDay();
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const thisWeekStart = new Date(todayStart.getTime() - daysToMonday * 24 * 60 * 60 * 1000);
+
+    // Calculate last week (previous Monday to previous Sunday)
+    const lastWeekStart = new Date(thisWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const lastWeekEnd = new Date(thisWeekStart.getTime() - 1);
+
+    // Helper function to get stats for a date range
+    const getStatsForRange = async (startDate: Date, endDate: Date) => {
+      const result = await pool.query(`
+        SELECT
+          COUNT(*) as total_enriched,
+          COUNT(CASE WHEN enrichment_status = 'completed' THEN 1 END) as successful,
+          COUNT(CASE WHEN enrichment_status = 'failed' OR enrichment_status = 'no_data' THEN 1 END) as failed,
+          COUNT(CASE WHEN salesforce_updated = true THEN 1 END) as salesforce_updated,
+          ROUND(AVG(fit_score), 1) as avg_fit_score,
+          MIN(fit_score) as min_fit_score,
+          MAX(fit_score) as max_fit_score,
+          COUNT(CASE WHEN fit_score >= 80 THEN 1 END) as premium_count,
+          COUNT(CASE WHEN fit_score >= 60 AND fit_score < 80 THEN 1 END) as high_fit_count,
+          COUNT(CASE WHEN fit_score >= 40 AND fit_score < 60 THEN 1 END) as mql_count,
+          COUNT(CASE WHEN fit_score < 40 THEN 1 END) as disqualified_count,
+          COUNT(CASE WHEN has_gmb = true THEN 1 END) as has_gmb_count,
+          COUNT(CASE WHEN has_website = true THEN 1 END) as has_website_count,
+          COUNT(CASE WHEN spending_on_marketing = true THEN 1 END) as has_pixels_count
+        FROM lead_enrichments
+        WHERE created_at >= $1 AND created_at <= $2
+      `, [startDate.toISOString(), endDate.toISOString()]);
+
+      const row = result.rows[0];
+      return {
+        total_enriched: parseInt(row.total_enriched) || 0,
+        successful: parseInt(row.successful) || 0,
+        failed: parseInt(row.failed) || 0,
+        salesforce_updated: parseInt(row.salesforce_updated) || 0,
+        avg_fit_score: parseFloat(row.avg_fit_score) || 0,
+        min_fit_score: parseInt(row.min_fit_score) || 0,
+        max_fit_score: parseInt(row.max_fit_score) || 0,
+        score_distribution: {
+          premium: parseInt(row.premium_count) || 0,
+          high_fit: parseInt(row.high_fit_count) || 0,
+          mql: parseInt(row.mql_count) || 0,
+          disqualified: parseInt(row.disqualified_count) || 0,
+        },
+        data_quality: {
+          has_gmb: parseInt(row.has_gmb_count) || 0,
+          has_website: parseInt(row.has_website_count) || 0,
+          has_pixels: parseInt(row.has_pixels_count) || 0,
+        },
+      };
+    };
+
+    // Get hourly breakdown for today
+    const getHourlyStats = async () => {
+      const result = await pool.query(`
+        SELECT
+          EXTRACT(HOUR FROM created_at) as hour,
+          COUNT(*) as count,
+          ROUND(AVG(fit_score), 1) as avg_score
+        FROM lead_enrichments
+        WHERE created_at >= $1
+        GROUP BY EXTRACT(HOUR FROM created_at)
+        ORDER BY hour
+      `, [todayStart.toISOString()]);
+
+      return result.rows.map(row => ({
+        hour: parseInt(row.hour),
+        count: parseInt(row.count),
+        avg_score: parseFloat(row.avg_score) || 0,
+      }));
+    };
+
+    // Get daily breakdown for this week
+    const getDailyStats = async (startDate: Date, endDate: Date) => {
+      const result = await pool.query(`
+        SELECT
+          DATE(created_at) as date,
+          COUNT(*) as count,
+          ROUND(AVG(fit_score), 1) as avg_score
+        FROM lead_enrichments
+        WHERE created_at >= $1 AND created_at <= $2
+        GROUP BY DATE(created_at)
+        ORDER BY date
+      `, [startDate.toISOString(), endDate.toISOString()]);
+
+      return result.rows.map(row => ({
+        date: row.date,
+        count: parseInt(row.count),
+        avg_score: parseFloat(row.avg_score) || 0,
+      }));
+    };
+
+    // Get recent enrichments
+    const getRecentEnrichments = async (limit: number) => {
+      const result = await pool.query(`
+        SELECT
+          salesforce_lead_id,
+          enrichment_status,
+          fit_score,
+          salesforce_updated,
+          has_gmb,
+          has_website,
+          created_at
+        FROM lead_enrichments
+        ORDER BY created_at DESC
+        LIMIT $1
+      `, [limit]);
+
+      return result.rows;
+    };
+
+    // Execute all queries
+    const [today, yesterday, thisWeek, lastWeek, hourlyToday, dailyThisWeek, dailyLastWeek, recentEnrichments] = await Promise.all([
+      getStatsForRange(todayStart, now),
+      getStatsForRange(yesterdayStart, yesterdayEnd),
+      getStatsForRange(thisWeekStart, now),
+      getStatsForRange(lastWeekStart, lastWeekEnd),
+      getHourlyStats(),
+      getDailyStats(thisWeekStart, now),
+      getDailyStats(lastWeekStart, lastWeekEnd),
+      getRecentEnrichments(10),
+    ]);
+
+    // Calculate trends (percentage change)
+    const calcTrend = (current: number, previous: number) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return Math.round(((current - previous) / previous) * 100);
+    };
+
+    res.json({
+      periods: {
+        today: {
+          label: 'Today',
+          start: todayStart.toISOString(),
+          end: now.toISOString(),
+          stats: today,
+          hourly: hourlyToday,
+        },
+        yesterday: {
+          label: 'Yesterday',
+          start: yesterdayStart.toISOString(),
+          end: yesterdayEnd.toISOString(),
+          stats: yesterday,
+        },
+        this_week: {
+          label: 'This Week',
+          start: thisWeekStart.toISOString(),
+          end: now.toISOString(),
+          stats: thisWeek,
+          daily: dailyThisWeek,
+        },
+        last_week: {
+          label: 'Last Week',
+          start: lastWeekStart.toISOString(),
+          end: lastWeekEnd.toISOString(),
+          stats: lastWeek,
+          daily: dailyLastWeek,
+        },
+      },
+      trends: {
+        today_vs_yesterday: {
+          total_enriched: calcTrend(today.total_enriched, yesterday.total_enriched),
+          avg_fit_score: calcTrend(today.avg_fit_score, yesterday.avg_fit_score),
+        },
+        this_week_vs_last_week: {
+          total_enriched: calcTrend(thisWeek.total_enriched, lastWeek.total_enriched),
+          avg_fit_score: calcTrend(thisWeek.avg_fit_score, lastWeek.avg_fit_score),
+        },
+      },
+      recent_enrichments: recentEnrichments,
+      generated_at: now.toISOString(),
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Failed to fetch enrichment KPIs', { error: errorMessage });
+
+    // Check if it's a table not found error
+    if (errorMessage.includes('does not exist') || errorMessage.includes('42P01')) {
+      res.json({
+        periods: {
+          today: { label: 'Today', stats: { total_enriched: 0, successful: 0, failed: 0, avg_fit_score: 0, score_distribution: { premium: 0, high_fit: 0, mql: 0, disqualified: 0 }, data_quality: { has_gmb: 0, has_website: 0, has_pixels: 0 } } },
+          yesterday: { label: 'Yesterday', stats: { total_enriched: 0, successful: 0, failed: 0, avg_fit_score: 0, score_distribution: { premium: 0, high_fit: 0, mql: 0, disqualified: 0 }, data_quality: { has_gmb: 0, has_website: 0, has_pixels: 0 } } },
+          this_week: { label: 'This Week', stats: { total_enriched: 0, successful: 0, failed: 0, avg_fit_score: 0, score_distribution: { premium: 0, high_fit: 0, mql: 0, disqualified: 0 }, data_quality: { has_gmb: 0, has_website: 0, has_pixels: 0 } } },
+          last_week: { label: 'Last Week', stats: { total_enriched: 0, successful: 0, failed: 0, avg_fit_score: 0, score_distribution: { premium: 0, high_fit: 0, mql: 0, disqualified: 0 }, data_quality: { has_gmb: 0, has_website: 0, has_pixels: 0 } } },
+        },
+        trends: { today_vs_yesterday: { total_enriched: 0, avg_fit_score: 0 }, this_week_vs_last_week: { total_enriched: 0, avg_fit_score: 0 } },
+        recent_enrichments: [],
+        setup_required: 'Database tables not found. Run migrations first.',
+        generated_at: new Date().toISOString(),
+      });
+    } else {
+      res.status(500).json({ error: `Failed to fetch enrichment KPIs: ${errorMessage}` });
+    }
+  }
+});
+
 // Batch enrich leads and update Salesforce (no auth - internal dashboard)
 app.post('/api/dashboard/enrich-batch', async (req, res) => {
   const { lead_ids } = req.body;
@@ -1036,6 +1242,262 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
     res.status(500).json({
       error: 'Enrichment failed',
       message: error instanceof Error ? error.message : 'Unknown error',
+      request_id: requestId,
+    });
+  }
+});
+
+// ============ Workato Automatic Enrichment Endpoint ============
+
+// Workato sends a Salesforce Lead ID, we fetch the lead, enrich it, and update Salesforce
+// This is the simplified endpoint for automatic enrichment from Workato
+app.post('/api/workato/enrich', authenticateApiKey, async (req, res) => {
+  const requestId = uuidv4();
+  const startTime = Date.now();
+
+  logger.info('Workato automatic enrichment request received', { requestId, body: req.body });
+
+  try {
+    const { salesforce_lead_id } = req.body;
+
+    if (!salesforce_lead_id) {
+      return res.status(400).json({ error: 'salesforce_lead_id is required' });
+    }
+
+    // Fetch lead data from Salesforce
+    const salesforce = getSalesforceService();
+    const query = `
+      SELECT Id, Company, Website, Phone, City, State, Street, PostalCode, LeadSource, FirstName, LastName, Email
+      FROM Lead
+      WHERE Id = '${salesforce_lead_id}'
+    `;
+    const result = await salesforce.query(query);
+
+    if (result.records.length === 0) {
+      logger.warn('Lead not found in Salesforce', { requestId, salesforceLeadId: salesforce_lead_id });
+      return res.status(404).json({ error: 'Lead not found in Salesforce', request_id: requestId });
+    }
+
+    const lead = result.records[0] as {
+      Id: string; Company: string; Website?: string; Phone?: string;
+      City?: string; State?: string; Street?: string; PostalCode?: string;
+      LeadSource?: string; FirstName?: string; LastName?: string; Email?: string;
+    };
+
+    logger.info('Fetched lead from Salesforce', {
+      requestId,
+      leadId: lead.Id,
+      company: lead.Company,
+      hasWebsite: !!lead.Website,
+      hasPhone: !!lead.Phone,
+    });
+
+    const enrichmentData: EnrichmentData = {};
+
+    // Initialize services
+    const googlePlaces = new GooglePlacesService(process.env.GOOGLE_PLACES_API_KEY || '');
+    const pdl = new PeopleDataLabsService(process.env.PDL_API_KEY || '');
+    const websiteTech = new WebsiteTechService();
+
+    try {
+      // Step 1: Google Places enrichment (first priority - use all available data for matching)
+      try {
+        logger.info('Enriching with Google Places', { requestId, businessName: lead.Company });
+        const googlePlacesData = await googlePlaces.enrich(
+          lead.Company,
+          lead.Phone,
+          lead.City,
+          lead.State,
+          lead.Website,
+          lead.Street,
+          lead.PostalCode
+        );
+        if (googlePlacesData) {
+          enrichmentData.google_places = googlePlacesData;
+          logger.info('Google Places match found', {
+            requestId,
+            hasGMB: !!googlePlacesData.place_id,
+            gmbName: googlePlacesData.gmb_name,
+          });
+        }
+      } catch (error) {
+        logger.warn('Google Places enrichment failed', { requestId, error });
+      }
+
+      // Get fields that can be filled from GMB data
+      const filledFromGMB = getFilledFieldsFromGMB(enrichmentData.google_places, {
+        website: lead.Website,
+        phone: lead.Phone,
+        city: lead.City,
+        state: lead.State,
+      });
+
+      // Use GMB-filled website for tech detection if original is missing
+      const websiteForTech = lead.Website || filledFromGMB.website;
+
+      // Step 2: Website tech detection (use original or GMB-filled website)
+      if (websiteForTech) {
+        try {
+          logger.info('Detecting website tech', { requestId, website: websiteForTech });
+          const websiteTechData = await websiteTech.detectTech(websiteForTech);
+          enrichmentData.website_tech = websiteTechData;
+        } catch (error) {
+          logger.warn('Website tech detection failed', { requestId, error });
+        }
+      }
+
+      // Step 3: PDL Company Enrichment (for employees, years in business, industry, revenue)
+      try {
+        logger.info('Enriching with People Data Labs', { requestId });
+        const pdlData = await pdl.enrichCompany({
+          lead_id: requestId,
+          business_name: lead.Company,
+          website: websiteForTech,
+          phone: lead.Phone || filledFromGMB.phone,
+          city: lead.City || filledFromGMB.city,
+          state: lead.State || filledFromGMB.state,
+        });
+        if (pdlData) {
+          enrichmentData.pdl = pdlData;
+        }
+      } catch (error) {
+        logger.warn('PDL enrichment failed', { requestId, error });
+      }
+
+      // Step 4: Calculate Fit Score
+      const fitScoreResult = calculateFitScore(enrichmentData);
+
+      // Step 5: Map to Salesforce-aligned fields (use GMB-filled website if original missing)
+      const sfFields = mapToSalesforceFields(enrichmentData, websiteForTech);
+
+      // Step 6: Update Salesforce
+      let salesforceUpdated = false;
+      let salesforceError: string | undefined;
+      try {
+        const sfUpdateFields = formatForSalesforceUpdate(
+          sfFields,
+          lead.Website,
+          lead.Phone,
+          filledFromGMB,
+          fitScoreResult.fit_score,
+          enrichmentData.google_places?.gmb_types
+        );
+        const sfResult = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult, sfUpdateFields);
+        salesforceUpdated = sfResult.success;
+
+        if (!sfResult.success && sfResult.error) {
+          salesforceError = `${sfResult.error.code}: ${sfResult.error.message}`;
+          logger.warn('Salesforce update failed', {
+            requestId,
+            leadId: salesforce_lead_id,
+            errorCode: sfResult.error.code,
+            errorMessage: sfResult.error.message,
+          });
+        }
+
+        if (Object.keys(filledFromGMB).length > 0) {
+          logger.info('Filled missing lead fields from GMB', {
+            requestId,
+            filledFields: Object.keys(filledFromGMB),
+          });
+        }
+      } catch (sfError) {
+        logger.error('Failed to update Salesforce (exception)', { requestId, error: sfError });
+        salesforceError = sfError instanceof Error ? sfError.message : String(sfError);
+      }
+
+      // Step 7: Store enrichment record in database
+      const enrichmentStatus = enrichmentData.google_places || enrichmentData.pdl || enrichmentData.website_tech
+        ? 'completed' : 'no_data';
+
+      try {
+        await pool.query(
+          `INSERT INTO lead_enrichments (
+            salesforce_lead_id, job_id, enrichment_status,
+            google_places_data, pdl_data, website_tech_data,
+            fit_score, score_breakdown, salesforce_updated, salesforce_updated_at,
+            has_website, number_of_employees, number_of_gbp_reviews,
+            number_of_years_in_business, has_gmb, gmb_url,
+            location_type, business_license, spending_on_marketing
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+          [
+            salesforce_lead_id,
+            requestId,
+            enrichmentStatus,
+            enrichmentData.google_places ? JSON.stringify(enrichmentData.google_places) : null,
+            enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
+            enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
+            fitScoreResult.fit_score,
+            JSON.stringify(fitScoreResult.score_breakdown),
+            salesforceUpdated,
+            salesforceUpdated ? new Date() : null,
+            sfFields.has_website,
+            sfFields.number_of_employees,
+            sfFields.number_of_gbp_reviews,
+            sfFields.number_of_years_in_business,
+            sfFields.has_gmb,
+            sfFields.gmb_url,
+            sfFields.location_type,
+            sfFields.business_license,
+            sfFields.spending_on_marketing,
+          ]
+        );
+      } catch (dbError) {
+        logger.error('Failed to store enrichment record', { requestId, error: dbError });
+      }
+
+      const duration = Date.now() - startTime;
+      logger.info('Workato automatic enrichment completed', {
+        requestId,
+        salesforceLeadId: salesforce_lead_id,
+        fitScore: fitScoreResult.fit_score,
+        salesforceUpdated,
+        duration,
+      });
+
+      // Return comprehensive response for Workato
+      res.json({
+        success: true,
+        request_id: requestId,
+        enrichment_status: enrichmentStatus,
+        fit_score: fitScoreResult.fit_score,
+        salesforce_updated: salesforceUpdated,
+        salesforce_error: salesforceError,
+        duration_ms: duration,
+        lead: {
+          id: lead.Id,
+          company: lead.Company,
+          website: lead.Website,
+          phone: lead.Phone,
+          city: lead.City,
+          state: lead.State,
+        },
+        enrichment_summary: {
+          google_places_found: !!enrichmentData.google_places,
+          pdl_found: !!enrichmentData.pdl,
+          website_tech_scanned: !!enrichmentData.website_tech,
+          google_reviews: enrichmentData.google_places?.gmb_review_count ?? null,
+          google_rating: enrichmentData.google_places?.gmb_rating ?? null,
+          employee_count: enrichmentData.pdl?.employee_count ?? null,
+          years_in_business: enrichmentData.pdl?.years_in_business ?? null,
+          pixels_detected: enrichmentData.website_tech?.marketing_tools_detected ?? [],
+        },
+        score_breakdown: fitScoreResult.score_breakdown,
+      });
+    } finally {
+      await websiteTech.close();
+    }
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    logger.error('Workato automatic enrichment failed', {
+      requestId,
+      error: error instanceof Error ? error.message : String(error),
+      duration,
+    });
+
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
       request_id: requestId,
     });
   }

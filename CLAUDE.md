@@ -128,20 +128,102 @@ Health check (no auth).
 
 Retrieve enrichment data by Salesforce Lead ID.
 
+### POST /api/workato/enrich (X-API-Key required)
+
+Automatic enrichment endpoint for Workato. Fetches lead from Salesforce by ID, enriches it, and updates Salesforce directly.
+
+**Request:**
+```json
+{
+  "salesforce_lead_id": "00Qxxxxxxxxxxxx"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "request_id": "uuid",
+  "enrichment_status": "completed",
+  "fit_score": 78,
+  "salesforce_updated": true,
+  "duration_ms": 5230,
+  "lead": {
+    "id": "00Qxxxxxxxxxxxx",
+    "company": "ABC Roofing",
+    "website": "https://abcroofing.com",
+    "phone": "+15551234567",
+    "city": "Austin",
+    "state": "TX"
+  },
+  "enrichment_summary": {
+    "google_places_found": true,
+    "pdl_found": true,
+    "website_tech_scanned": true,
+    "google_reviews": 23,
+    "google_rating": 4.5,
+    "employee_count": 12,
+    "years_in_business": 8,
+    "pixels_detected": ["meta", "ga4"]
+  },
+  "score_breakdown": {...}
+}
+```
+
+### GET /api/dashboard/enrichment-kpis (no auth)
+
+Returns enrichment KPIs for today, yesterday, this week, and last week.
+
+**Response:**
+```json
+{
+  "periods": {
+    "today": {
+      "label": "Today",
+      "stats": {
+        "total_enriched": 25,
+        "successful": 23,
+        "failed": 2,
+        "salesforce_updated": 22,
+        "avg_fit_score": 58.3,
+        "score_distribution": {
+          "premium": 3,
+          "high_fit": 8,
+          "mql": 10,
+          "disqualified": 4
+        },
+        "data_quality": {
+          "has_gmb": 18,
+          "has_website": 20,
+          "has_pixels": 12
+        }
+      },
+      "hourly": [...]
+    },
+    "yesterday": {...},
+    "this_week": {...},
+    "last_week": {...}
+  },
+  "trends": {
+    "today_vs_yesterday": { "total_enriched": 15, "avg_fit_score": -3 },
+    "this_week_vs_last_week": { "total_enriched": 22, "avg_fit_score": 5 }
+  },
+  "recent_enrichments": [...]
+}
+```
+
 ## Fit Score Algorithm
 
-**Solvency (0-80 points):**
+**Solvency (0-85 points):**
 - Website: +10
 - Google reviews: 0-25 (scaled by count)
 - Years in business: 0-20
 - Employees: 0-20
-- Physical location: +5
+- Physical location: +10
 
-**Sophistication Penalty (-20 max):**
-- Meta Pixel: -7
-- GA4/Google Ads: -5
-- Multiple pixels: -10
-- Marketing automation: -5
+**Pixel Bonus (0-15 points):**
+- 1 pixel detected: +5
+- 2+ pixels detected: +10
 
 **Tiers:** 0-39 Disqualified, 40-59 MQL, 60-79 High Fit, 80-100 Premium
 
