@@ -613,10 +613,11 @@ app.get('/api/dashboard/unenriched', async (req, res) => {
     const offset = parseInt(req.query.offset as string) || 0;
     const startDate = req.query.startDate as string | undefined;
     const endDate = req.query.endDate as string | undefined;
+    const leadSource = req.query.leadSource as string | undefined;
 
     const salesforce = getSalesforceService();
     const dashboardService = new DashboardStatsService(salesforce);
-    const { leads, totalCount } = await dashboardService.getUnenrichedLeadsPaginated(limit, offset, startDate, endDate);
+    const { leads, totalCount } = await dashboardService.getUnenrichedLeadsPaginated(limit, offset, startDate, endDate, leadSource);
     res.json({
       leads,
       totalCount,

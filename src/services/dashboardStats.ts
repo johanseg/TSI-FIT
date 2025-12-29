@@ -212,7 +212,8 @@ export class DashboardStatsService {
     limit: number = 100,
     offset: number = 0,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    leadSource?: string
   ): Promise<{ leads: UnenrichedLead[]; totalCount: number }> {
     await this.salesforce.connect();
 
@@ -227,6 +228,9 @@ export class DashboardStatsService {
     // Format dates for SOQL datetime comparison
     const soqlStartDate = `${startDateStr}T00:00:00Z`;
     const soqlEndDate = `${endDateStr}T23:59:59Z`;
+
+    // Build lead source filter if provided
+    const leadSourceFilter = leadSource ? `AND LeadSource = '${leadSource}'` : '';
 
     // Helper to map lead records
     const mapLeads = (records: any[]): UnenrichedLead[] => records.map(lead => ({
@@ -252,6 +256,7 @@ export class DashboardStatsService {
         WHERE Score__c = null
           AND Company != null
           AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
+          ${leadSourceFilter}
       `;
       const countResult = await this.salesforce.query(countQuery);
       const totalCount = (countResult.records as any[])[0]?.cnt || 0;
@@ -263,6 +268,7 @@ export class DashboardStatsService {
         WHERE Score__c = null
           AND Company != null
           AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
+          ${leadSourceFilter}
         ORDER BY CreatedDate DESC
         LIMIT ${limit}
         OFFSET ${offset}
@@ -277,6 +283,7 @@ export class DashboardStatsService {
           FROM Lead
           WHERE Company != null
             AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
+            ${leadSourceFilter}
         `;
         const countResult = await this.salesforce.query(countQuery);
         const totalCount = (countResult.records as any[])[0]?.cnt || 0;
@@ -286,6 +293,7 @@ export class DashboardStatsService {
           FROM Lead
           WHERE Company != null
             AND CreatedDate >= ${soqlStartDate} AND CreatedDate <= ${soqlEndDate}
+            ${leadSourceFilter}
           ORDER BY CreatedDate DESC
           LIMIT ${limit}
           OFFSET ${offset}
