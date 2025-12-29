@@ -1952,6 +1952,7 @@
               <tr>
                 <th style="width: 40px;"></th>
                 <th>Company</th>
+                <th>SF Lead ID</th>
                 <th>Website</th>
                 <th>Phone</th>
                 <th>Location</th>
@@ -1964,6 +1965,7 @@
                 <tr>
                   <td><input type="checkbox" class="lead-checkbox" data-id="${lead.id}" onchange="toggleLeadSelection('${lead.id}')"></td>
                   <td><strong>${lead.company || '-'}</strong></td>
+                  <td><a href="https://townsquaremedia.lightning.force.com/lightning/r/Lead/${lead.id}/view" target="_blank" style="font-family: monospace; font-size: 11px;">${lead.id}</a></td>
                   <td>${lead.website ? `<a href="${lead.website}" target="_blank">${truncate(lead.website, 25)}</a>` : '-'}</td>
                   <td>${lead.phone || '-'}</td>
                   <td>${[lead.city, lead.state].filter(Boolean).join(', ') || '-'}</td>
