@@ -630,9 +630,10 @@ app.get('/api/dashboard/unenriched', async (req, res) => {
   }
 });
 
-// Enrichment KPIs endpoint - today, yesterday, this week, last week stats
-app.get('/api/dashboard/enrichment-kpis', async (_req, res) => {
+// Enrichment KPIs endpoint - supports date range selection
+app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
   try {
+    const period = req.query.period as string || 'today';
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
@@ -646,6 +647,76 @@ app.get('/api/dashboard/enrichment-kpis', async (_req, res) => {
     // Calculate last week (previous Monday to previous Sunday)
     const lastWeekStart = new Date(thisWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
     const lastWeekEnd = new Date(thisWeekStart.getTime() - 1);
+
+    // Calculate this month (first day to now)
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // Calculate last month
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+
+    // Determine primary period based on selection
+    let primaryStart: Date;
+    let primaryEnd: Date;
+    let primaryLabel: string;
+    let comparisonStart: Date;
+    let comparisonEnd: Date;
+    let comparisonLabel: string;
+
+    switch (period) {
+      case 'yesterday':
+        primaryStart = yesterdayStart;
+        primaryEnd = yesterdayEnd;
+        primaryLabel = 'Yesterday';
+        // Compare with day before yesterday
+        comparisonStart = new Date(yesterdayStart.getTime() - 24 * 60 * 60 * 1000);
+        comparisonEnd = new Date(yesterdayStart.getTime() - 1);
+        comparisonLabel = 'Day Before';
+        break;
+      case 'this_week':
+        primaryStart = thisWeekStart;
+        primaryEnd = now;
+        primaryLabel = 'This Week';
+        comparisonStart = lastWeekStart;
+        comparisonEnd = lastWeekEnd;
+        comparisonLabel = 'Last Week';
+        break;
+      case 'last_week':
+        primaryStart = lastWeekStart;
+        primaryEnd = lastWeekEnd;
+        primaryLabel = 'Last Week';
+        // Compare with week before
+        comparisonStart = new Date(lastWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+        comparisonEnd = new Date(lastWeekStart.getTime() - 1);
+        comparisonLabel = 'Previous Week';
+        break;
+      case 'this_month':
+        primaryStart = thisMonthStart;
+        primaryEnd = now;
+        primaryLabel = 'This Month';
+        comparisonStart = lastMonthStart;
+        comparisonEnd = lastMonthEnd;
+        comparisonLabel = 'Last Month';
+        break;
+      case 'last_month':
+        primaryStart = lastMonthStart;
+        primaryEnd = lastMonthEnd;
+        primaryLabel = 'Last Month';
+        // Compare with month before
+        comparisonStart = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+        comparisonEnd = new Date(now.getFullYear(), now.getMonth() - 1, 0, 23, 59, 59, 999);
+        comparisonLabel = 'Previous Month';
+        break;
+      case 'today':
+      default:
+        primaryStart = todayStart;
+        primaryEnd = now;
+        primaryLabel = 'Today';
+        comparisonStart = yesterdayStart;
+        comparisonEnd = yesterdayEnd;
+        comparisonLabel = 'Yesterday';
+        break;
+    }
 
     // Helper function to get stats for a date range
     const getStatsForRange = async (startDate: Date, endDate: Date) => {
@@ -692,18 +763,18 @@ app.get('/api/dashboard/enrichment-kpis', async (_req, res) => {
       };
     };
 
-    // Get hourly breakdown for today
-    const getHourlyStats = async () => {
+    // Get hourly breakdown for a date range
+    const getHourlyStats = async (startDate: Date, endDate: Date) => {
       const result = await pool.query(`
         SELECT
           EXTRACT(HOUR FROM created_at) as hour,
           COUNT(*) as count,
           ROUND(AVG(fit_score), 1) as avg_score
         FROM lead_enrichments
-        WHERE created_at >= $1
+        WHERE created_at >= $1 AND created_at <= $2
         GROUP BY EXTRACT(HOUR FROM created_at)
         ORDER BY hour
-      `, [todayStart.toISOString()]);
+      `, [startDate.toISOString(), endDate.toISOString()]);
 
       return result.rows.map(row => ({
         hour: parseInt(row.hour),
@@ -712,7 +783,7 @@ app.get('/api/dashboard/enrichment-kpis', async (_req, res) => {
       }));
     };
 
-    // Get daily breakdown for this week
+    // Get daily breakdown for a date range
     const getDailyStats = async (startDate: Date, endDate: Date) => {
       const result = await pool.query(`
         SELECT
@@ -732,8 +803,8 @@ app.get('/api/dashboard/enrichment-kpis', async (_req, res) => {
       }));
     };
 
-    // Get recent enrichments
-    const getRecentEnrichments = async (limit: number) => {
+    // Get recent enrichments within a date range
+    const getRecentEnrichments = async (startDate: Date, endDate: Date, limit: number) => {
       const result = await pool.query(`
         SELECT
           salesforce_lead_id,
@@ -744,23 +815,21 @@ app.get('/api/dashboard/enrichment-kpis', async (_req, res) => {
           has_website,
           created_at
         FROM lead_enrichments
+        WHERE created_at >= $1 AND created_at <= $2
         ORDER BY created_at DESC
-        LIMIT $1
-      `, [limit]);
+        LIMIT $3
+      `, [startDate.toISOString(), endDate.toISOString(), limit]);
 
       return result.rows;
     };
 
-    // Execute all queries
-    const [today, yesterday, thisWeek, lastWeek, hourlyToday, dailyThisWeek, dailyLastWeek, recentEnrichments] = await Promise.all([
-      getStatsForRange(todayStart, now),
-      getStatsForRange(yesterdayStart, yesterdayEnd),
-      getStatsForRange(thisWeekStart, now),
-      getStatsForRange(lastWeekStart, lastWeekEnd),
-      getHourlyStats(),
-      getDailyStats(thisWeekStart, now),
-      getDailyStats(lastWeekStart, lastWeekEnd),
-      getRecentEnrichments(10),
+    // Execute queries for primary and comparison periods
+    const [primaryStats, comparisonStats, hourlyStats, dailyStats, recentEnrichments] = await Promise.all([
+      getStatsForRange(primaryStart, primaryEnd),
+      getStatsForRange(comparisonStart, comparisonEnd),
+      getHourlyStats(primaryStart, primaryEnd),
+      getDailyStats(primaryStart, primaryEnd),
+      getRecentEnrichments(primaryStart, primaryEnd, 10),
     ]);
 
     // Calculate trends (percentage change)
@@ -770,44 +839,25 @@ app.get('/api/dashboard/enrichment-kpis', async (_req, res) => {
     };
 
     res.json({
-      periods: {
-        today: {
-          label: 'Today',
-          start: todayStart.toISOString(),
-          end: now.toISOString(),
-          stats: today,
-          hourly: hourlyToday,
-        },
-        yesterday: {
-          label: 'Yesterday',
-          start: yesterdayStart.toISOString(),
-          end: yesterdayEnd.toISOString(),
-          stats: yesterday,
-        },
-        this_week: {
-          label: 'This Week',
-          start: thisWeekStart.toISOString(),
-          end: now.toISOString(),
-          stats: thisWeek,
-          daily: dailyThisWeek,
-        },
-        last_week: {
-          label: 'Last Week',
-          start: lastWeekStart.toISOString(),
-          end: lastWeekEnd.toISOString(),
-          stats: lastWeek,
-          daily: dailyLastWeek,
-        },
+      selected_period: period,
+      primary: {
+        label: primaryLabel,
+        start: primaryStart.toISOString(),
+        end: primaryEnd.toISOString(),
+        stats: primaryStats,
+        hourly: hourlyStats,
+        daily: dailyStats,
+      },
+      comparison: {
+        label: comparisonLabel,
+        start: comparisonStart.toISOString(),
+        end: comparisonEnd.toISOString(),
+        stats: comparisonStats,
       },
       trends: {
-        today_vs_yesterday: {
-          total_enriched: calcTrend(today.total_enriched, yesterday.total_enriched),
-          avg_fit_score: calcTrend(today.avg_fit_score, yesterday.avg_fit_score),
-        },
-        this_week_vs_last_week: {
-          total_enriched: calcTrend(thisWeek.total_enriched, lastWeek.total_enriched),
-          avg_fit_score: calcTrend(thisWeek.avg_fit_score, lastWeek.avg_fit_score),
-        },
+        total_enriched: calcTrend(primaryStats.total_enriched, comparisonStats.total_enriched),
+        avg_fit_score: calcTrend(primaryStats.avg_fit_score, comparisonStats.avg_fit_score),
+        successful: calcTrend(primaryStats.successful, comparisonStats.successful),
       },
       recent_enrichments: recentEnrichments,
       generated_at: now.toISOString(),
@@ -816,16 +866,20 @@ app.get('/api/dashboard/enrichment-kpis', async (_req, res) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     logger.error('Failed to fetch enrichment KPIs', { error: errorMessage });
 
+    const emptyStats = {
+      total_enriched: 0, successful: 0, failed: 0, salesforce_updated: 0,
+      avg_fit_score: 0, min_fit_score: 0, max_fit_score: 0,
+      score_distribution: { premium: 0, high_fit: 0, mql: 0, disqualified: 0 },
+      data_quality: { has_gmb: 0, has_website: 0, has_pixels: 0 },
+    };
+
     // Check if it's a table not found error
     if (errorMessage.includes('does not exist') || errorMessage.includes('42P01')) {
       res.json({
-        periods: {
-          today: { label: 'Today', stats: { total_enriched: 0, successful: 0, failed: 0, avg_fit_score: 0, score_distribution: { premium: 0, high_fit: 0, mql: 0, disqualified: 0 }, data_quality: { has_gmb: 0, has_website: 0, has_pixels: 0 } } },
-          yesterday: { label: 'Yesterday', stats: { total_enriched: 0, successful: 0, failed: 0, avg_fit_score: 0, score_distribution: { premium: 0, high_fit: 0, mql: 0, disqualified: 0 }, data_quality: { has_gmb: 0, has_website: 0, has_pixels: 0 } } },
-          this_week: { label: 'This Week', stats: { total_enriched: 0, successful: 0, failed: 0, avg_fit_score: 0, score_distribution: { premium: 0, high_fit: 0, mql: 0, disqualified: 0 }, data_quality: { has_gmb: 0, has_website: 0, has_pixels: 0 } } },
-          last_week: { label: 'Last Week', stats: { total_enriched: 0, successful: 0, failed: 0, avg_fit_score: 0, score_distribution: { premium: 0, high_fit: 0, mql: 0, disqualified: 0 }, data_quality: { has_gmb: 0, has_website: 0, has_pixels: 0 } } },
-        },
-        trends: { today_vs_yesterday: { total_enriched: 0, avg_fit_score: 0 }, this_week_vs_last_week: { total_enriched: 0, avg_fit_score: 0 } },
+        selected_period: 'today',
+        primary: { label: 'Today', stats: emptyStats, hourly: [], daily: [] },
+        comparison: { label: 'Yesterday', stats: emptyStats },
+        trends: { total_enriched: 0, avg_fit_score: 0, successful: 0 },
         recent_enrichments: [],
         setup_required: 'Database tables not found. Run migrations first.',
         generated_at: new Date().toISOString(),

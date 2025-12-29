@@ -579,8 +579,8 @@
       Manual Enrichment
     </div>
     <div class="nav-item" onclick="switchTab('kpis')">
-      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
-      Enrichment KPIs
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+      Auto-Enrichment
     </div>
     <div class="nav-item" onclick="switchTab('unenriched')">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
@@ -658,11 +658,19 @@
       </div>
     </div>
 
-    <!-- Enrichment KPIs Tab -->
+    <!-- Auto-Enrichment Tab -->
     <div id="kpis-tab" class="tab-content">
       <div class="header">
-        <h2>Enrichment KPIs</h2>
+        <h2>Auto-Enrichment</h2>
         <div class="header-controls">
+          <select id="kpiDateRange" onchange="loadKPIs()">
+            <option value="today" selected>Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="this_week">This Week</option>
+            <option value="last_week">Last Week</option>
+            <option value="this_month">This Month</option>
+            <option value="last_month">Last Month</option>
+          </select>
           <button onclick="loadKPIs()">Refresh</button>
         </div>
       </div>
@@ -1153,15 +1161,17 @@
       });
     }
 
-    // Enrichment KPIs
-    let kpiHourlyChart, kpiWeeklyChart;
+    // Auto-Enrichment KPIs
+    let kpiHourlyChart, kpiDailyChart;
 
     async function loadKPIs() {
       const content = document.getElementById('kpis-content');
-      content.innerHTML = '<div class="loading">Loading enrichment KPIs</div>';
+      content.innerHTML = '<div class="loading">Loading auto-enrichment data</div>';
+
+      const period = document.getElementById('kpiDateRange').value;
 
       try {
-        const response = await fetchApi('/api/dashboard/enrichment-kpis');
+        const response = await fetchApi(`/api/dashboard/enrichment-kpis?period=${period}`);
         if (!response.ok) {
           const errorData = await parseResponse(response);
           throw new Error(errorData.error || `HTTP ${response.status}`);
@@ -1172,7 +1182,7 @@
       } catch (error) {
         console.error('KPIs load error:', error);
         content.innerHTML = `<div class="error-message">
-          <strong>Error Loading KPIs</strong><br>
+          <strong>Error Loading Auto-Enrichment Data</strong><br>
           ${escapeHtml(error.message)}<br><br>
           <small>Make sure the database tables exist and the server is running.</small>
         </div>`;
@@ -1181,7 +1191,7 @@
 
     function renderKPIs(data) {
       const content = document.getElementById('kpis-content');
-      const { periods, trends, recent_enrichments, setup_required } = data;
+      const { primary, comparison, trends, recent_enrichments, setup_required, selected_period } = data;
 
       // Setup warning if needed
       let setupWarning = '';
@@ -1201,126 +1211,175 @@
         return `<span style="color: #6b7280;">0%</span>`;
       };
 
+      // Format date range
+      const formatDateRange = (start, end) => {
+        const startDate = new Date(start);
+        const endDate = new Date(end);
+        const options = { month: 'short', day: 'numeric' };
+        if (startDate.toDateString() === endDate.toDateString()) {
+          return startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+        return `${startDate.toLocaleDateString('en-US', options)} - ${endDate.toLocaleDateString('en-US', { ...options, year: 'numeric' })}`;
+      };
+
+      // Calculate success rate
+      const successRate = (stats) => stats.total_enriched > 0 ? Math.round(stats.successful / stats.total_enriched * 100) : 0;
+      const gmbRate = (stats) => stats.total_enriched > 0 ? Math.round(stats.data_quality.has_gmb / stats.total_enriched * 100) : 0;
+      const websiteRate = (stats) => stats.total_enriched > 0 ? Math.round(stats.data_quality.has_website / stats.total_enriched * 100) : 0;
+      const pixelRate = (stats) => stats.total_enriched > 0 ? Math.round(stats.data_quality.has_pixels / stats.total_enriched * 100) : 0;
+      const sfUpdateRate = (stats) => stats.total_enriched > 0 ? Math.round(stats.salesforce_updated / stats.total_enriched * 100) : 0;
+
       content.innerHTML = `
         ${setupWarning}
 
-        <!-- Period Comparison Cards -->
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 30px;">
-          <!-- Today -->
+        <!-- Primary Period Summary -->
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 30px;">
+          <!-- Selected Period Card -->
           <div class="card" style="background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: white;">
-            <h3 style="color: white; font-size: 14px; opacity: 0.9;">Today</h3>
-            <div style="font-size: 36px; font-weight: 700; margin: 10px 0;">${periods.today.stats.total_enriched}</div>
-            <div style="font-size: 13px; opacity: 0.8;">Leads Enriched</div>
-            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2);">
-              <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                <span>Avg Score</span>
-                <span style="font-weight: 600;">${periods.today.stats.avg_fit_score}</span>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+              <div>
+                <h3 style="color: white; font-size: 14px; opacity: 0.9;">${primary.label}</h3>
+                <div style="font-size: 42px; font-weight: 700; margin: 10px 0;">${primary.stats.total_enriched}</div>
+                <div style="font-size: 13px; opacity: 0.8;">Leads Enriched</div>
               </div>
-              <div style="display: flex; justify-content: space-between; font-size: 13px; margin-top: 5px;">
-                <span>vs Yesterday</span>
-                <span style="font-weight: 600;">${trendIndicator(trends.today_vs_yesterday.total_enriched)}</span>
+              <div style="text-align: right;">
+                <div style="font-size: 12px; opacity: 0.7;">${formatDateRange(primary.start, primary.end)}</div>
+              </div>
+            </div>
+            <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+              <div>
+                <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase;">Avg Score</div>
+                <div style="font-size: 24px; font-weight: 600;">${primary.stats.avg_fit_score}</div>
+              </div>
+              <div>
+                <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase;">Success Rate</div>
+                <div style="font-size: 24px; font-weight: 600;">${successRate(primary.stats)}%</div>
+              </div>
+              <div>
+                <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase;">SF Updated</div>
+                <div style="font-size: 24px; font-weight: 600;">${primary.stats.salesforce_updated}</div>
               </div>
             </div>
           </div>
 
-          <!-- Yesterday -->
+          <!-- Comparison Period Card -->
           <div class="card">
-            <h3 style="font-size: 14px; color: #6b7280;">Yesterday</h3>
-            <div style="font-size: 36px; font-weight: 700; margin: 10px 0; color: #1a1a2e;">${periods.yesterday.stats.total_enriched}</div>
-            <div style="font-size: 13px; color: #6b7280;">Leads Enriched</div>
-            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">
-              <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                <span style="color: #6b7280;">Avg Score</span>
-                <span style="font-weight: 600;">${periods.yesterday.stats.avg_fit_score}</span>
+            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+              <div>
+                <h3 style="font-size: 14px; color: #6b7280;">${comparison.label}</h3>
+                <div style="font-size: 42px; font-weight: 700; margin: 10px 0; color: #1a1a2e;">${comparison.stats.total_enriched}</div>
+                <div style="font-size: 13px; color: #6b7280;">Leads Enriched</div>
               </div>
-              <div style="display: flex; justify-content: space-between; font-size: 13px; margin-top: 5px;">
-                <span style="color: #6b7280;">SF Updated</span>
-                <span style="font-weight: 600;">${periods.yesterday.stats.salesforce_updated}</span>
+              <div style="text-align: right;">
+                <div style="font-size: 12px; color: #9ca3af;">${formatDateRange(comparison.start, comparison.end)}</div>
               </div>
             </div>
-          </div>
-
-          <!-- This Week -->
-          <div class="card" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white;">
-            <h3 style="color: white; font-size: 14px; opacity: 0.9;">This Week</h3>
-            <div style="font-size: 36px; font-weight: 700; margin: 10px 0;">${periods.this_week.stats.total_enriched}</div>
-            <div style="font-size: 13px; opacity: 0.8;">Leads Enriched</div>
-            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2);">
-              <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                <span>Avg Score</span>
-                <span style="font-weight: 600;">${periods.this_week.stats.avg_fit_score}</span>
+            <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee; display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+              <div>
+                <div style="font-size: 11px; color: #9ca3af; text-transform: uppercase;">Avg Score</div>
+                <div style="font-size: 24px; font-weight: 600;">${comparison.stats.avg_fit_score}</div>
               </div>
-              <div style="display: flex; justify-content: space-between; font-size: 13px; margin-top: 5px;">
-                <span>vs Last Week</span>
-                <span style="font-weight: 600;">${trendIndicator(trends.this_week_vs_last_week.total_enriched)}</span>
+              <div>
+                <div style="font-size: 11px; color: #9ca3af; text-transform: uppercase;">Success Rate</div>
+                <div style="font-size: 24px; font-weight: 600;">${successRate(comparison.stats)}%</div>
               </div>
-            </div>
-          </div>
-
-          <!-- Last Week -->
-          <div class="card">
-            <h3 style="font-size: 14px; color: #6b7280;">Last Week</h3>
-            <div style="font-size: 36px; font-weight: 700; margin: 10px 0; color: #1a1a2e;">${periods.last_week.stats.total_enriched}</div>
-            <div style="font-size: 13px; color: #6b7280;">Leads Enriched</div>
-            <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee;">
-              <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                <span style="color: #6b7280;">Avg Score</span>
-                <span style="font-weight: 600;">${periods.last_week.stats.avg_fit_score}</span>
-              </div>
-              <div style="display: flex; justify-content: space-between; font-size: 13px; margin-top: 5px;">
-                <span style="color: #6b7280;">SF Updated</span>
-                <span style="font-weight: 600;">${periods.last_week.stats.salesforce_updated}</span>
+              <div>
+                <div style="font-size: 11px; color: #9ca3af; text-transform: uppercase;">SF Updated</div>
+                <div style="font-size: 24px; font-weight: 600;">${comparison.stats.salesforce_updated}</div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Detailed Stats Row -->
+        <!-- Trends Row -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px;">
+          <div class="card" style="padding: 16px;">
+            <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">Volume Change</div>
+            <div style="font-size: 28px; font-weight: 700;">${trendIndicator(trends.total_enriched)}</div>
+            <div style="font-size: 11px; color: #9ca3af;">vs ${comparison.label}</div>
+          </div>
+          <div class="card" style="padding: 16px;">
+            <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">Avg Score Change</div>
+            <div style="font-size: 28px; font-weight: 700;">${trendIndicator(trends.avg_fit_score)}</div>
+            <div style="font-size: 11px; color: #9ca3af;">vs ${comparison.label}</div>
+          </div>
+          <div class="card" style="padding: 16px;">
+            <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">Success Change</div>
+            <div style="font-size: 28px; font-weight: 700;">${trendIndicator(trends.successful)}</div>
+            <div style="font-size: 11px; color: #9ca3af;">vs ${comparison.label}</div>
+          </div>
+          <div class="card" style="padding: 16px;">
+            <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">Score Range</div>
+            <div style="font-size: 28px; font-weight: 700;">${primary.stats.min_fit_score}-${primary.stats.max_fit_score}</div>
+            <div style="font-size: 11px; color: #9ca3af;">${primary.label}</div>
+          </div>
+        </div>
+
+        <!-- Charts Row -->
         <div class="charts-row">
-          <!-- Today's Hourly Activity -->
+          <!-- Hourly Activity -->
           <div class="card">
-            <h3>Today's Hourly Activity</h3>
+            <h3>${primary.label} Hourly Activity</h3>
             <div class="chart-container" style="height: 250px;">
               <canvas id="kpiHourlyChart"></canvas>
             </div>
           </div>
 
-          <!-- This Week Daily Activity -->
+          <!-- Daily Activity -->
           <div class="card">
-            <h3>This Week Daily Activity</h3>
+            <h3>${primary.label} Daily Activity</h3>
             <div class="chart-container" style="height: 250px;">
-              <canvas id="kpiWeeklyChart"></canvas>
+              <canvas id="kpiDailyChart"></canvas>
             </div>
           </div>
         </div>
 
-        <!-- Score Distribution Comparison -->
-        <div class="card">
+        <!-- Score Distribution -->
+        <div class="card" style="margin-top: 20px;">
           <h3>Fit Score Distribution</h3>
-          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px;">
-            ${['today', 'yesterday', 'this_week', 'last_week'].map(period => `
-              <div>
-                <h4 style="font-size: 13px; color: #6b7280; margin-bottom: 12px; text-transform: uppercase;">${periods[period].label}</h4>
-                <div style="display: flex; flex-direction: column; gap: 8px;">
-                  <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span class="badge premium" style="background: #dbeafe; color: #2563eb;">Premium (80+)</span>
-                    <span style="font-weight: 600;">${periods[period].stats.score_distribution.premium}</span>
-                  </div>
-                  <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span class="badge high-fit">High Fit (60-79)</span>
-                    <span style="font-weight: 600;">${periods[period].stats.score_distribution.high_fit}</span>
-                  </div>
-                  <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span class="badge mql">MQL (40-59)</span>
-                    <span style="font-weight: 600;">${periods[period].stats.score_distribution.mql}</span>
-                  </div>
-                  <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span class="badge disqualified">Disqualified (&lt;40)</span>
-                    <span style="font-weight: 600;">${periods[period].stats.score_distribution.disqualified}</span>
-                  </div>
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 30px;">
+            <div>
+              <h4 style="font-size: 13px; color: #4f46e5; margin-bottom: 12px; text-transform: uppercase;">${primary.label}</h4>
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span class="badge premium" style="background: #dbeafe; color: #2563eb;">Premium (80+)</span>
+                  <span style="font-weight: 600;">${primary.stats.score_distribution.premium}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span class="badge high-fit">High Fit (60-79)</span>
+                  <span style="font-weight: 600;">${primary.stats.score_distribution.high_fit}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span class="badge mql">MQL (40-59)</span>
+                  <span style="font-weight: 600;">${primary.stats.score_distribution.mql}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span class="badge disqualified">Disqualified (&lt;40)</span>
+                  <span style="font-weight: 600;">${primary.stats.score_distribution.disqualified}</span>
                 </div>
               </div>
-            `).join('')}
+            </div>
+            <div>
+              <h4 style="font-size: 13px; color: #6b7280; margin-bottom: 12px; text-transform: uppercase;">${comparison.label}</h4>
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span class="badge premium" style="background: #dbeafe; color: #2563eb;">Premium (80+)</span>
+                  <span style="font-weight: 600;">${comparison.stats.score_distribution.premium}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span class="badge high-fit">High Fit (60-79)</span>
+                  <span style="font-weight: 600;">${comparison.stats.score_distribution.high_fit}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span class="badge mql">MQL (40-59)</span>
+                  <span style="font-weight: 600;">${comparison.stats.score_distribution.mql}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span class="badge disqualified">Disqualified (&lt;40)</span>
+                  <span style="font-weight: 600;">${comparison.stats.score_distribution.disqualified}</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1331,47 +1390,35 @@
             <thead>
               <tr>
                 <th>Metric</th>
-                <th>Today</th>
-                <th>Yesterday</th>
-                <th>This Week</th>
-                <th>Last Week</th>
+                <th>${primary.label}</th>
+                <th>${comparison.label}</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td><strong>Has GMB</strong></td>
-                <td>${periods.today.stats.data_quality.has_gmb} (${periods.today.stats.total_enriched > 0 ? Math.round(periods.today.stats.data_quality.has_gmb / periods.today.stats.total_enriched * 100) : 0}%)</td>
-                <td>${periods.yesterday.stats.data_quality.has_gmb} (${periods.yesterday.stats.total_enriched > 0 ? Math.round(periods.yesterday.stats.data_quality.has_gmb / periods.yesterday.stats.total_enriched * 100) : 0}%)</td>
-                <td>${periods.this_week.stats.data_quality.has_gmb} (${periods.this_week.stats.total_enriched > 0 ? Math.round(periods.this_week.stats.data_quality.has_gmb / periods.this_week.stats.total_enriched * 100) : 0}%)</td>
-                <td>${periods.last_week.stats.data_quality.has_gmb} (${periods.last_week.stats.total_enriched > 0 ? Math.round(periods.last_week.stats.data_quality.has_gmb / periods.last_week.stats.total_enriched * 100) : 0}%)</td>
+                <td>${primary.stats.data_quality.has_gmb} (${gmbRate(primary.stats)}%)</td>
+                <td>${comparison.stats.data_quality.has_gmb} (${gmbRate(comparison.stats)}%)</td>
               </tr>
               <tr>
                 <td><strong>Has Website</strong></td>
-                <td>${periods.today.stats.data_quality.has_website} (${periods.today.stats.total_enriched > 0 ? Math.round(periods.today.stats.data_quality.has_website / periods.today.stats.total_enriched * 100) : 0}%)</td>
-                <td>${periods.yesterday.stats.data_quality.has_website} (${periods.yesterday.stats.total_enriched > 0 ? Math.round(periods.yesterday.stats.data_quality.has_website / periods.yesterday.stats.total_enriched * 100) : 0}%)</td>
-                <td>${periods.this_week.stats.data_quality.has_website} (${periods.this_week.stats.total_enriched > 0 ? Math.round(periods.this_week.stats.data_quality.has_website / periods.this_week.stats.total_enriched * 100) : 0}%)</td>
-                <td>${periods.last_week.stats.data_quality.has_website} (${periods.last_week.stats.total_enriched > 0 ? Math.round(periods.last_week.stats.data_quality.has_website / periods.last_week.stats.total_enriched * 100) : 0}%)</td>
+                <td>${primary.stats.data_quality.has_website} (${websiteRate(primary.stats)}%)</td>
+                <td>${comparison.stats.data_quality.has_website} (${websiteRate(comparison.stats)}%)</td>
               </tr>
               <tr>
                 <td><strong>Has Pixels</strong></td>
-                <td>${periods.today.stats.data_quality.has_pixels} (${periods.today.stats.total_enriched > 0 ? Math.round(periods.today.stats.data_quality.has_pixels / periods.today.stats.total_enriched * 100) : 0}%)</td>
-                <td>${periods.yesterday.stats.data_quality.has_pixels} (${periods.yesterday.stats.total_enriched > 0 ? Math.round(periods.yesterday.stats.data_quality.has_pixels / periods.yesterday.stats.total_enriched * 100) : 0}%)</td>
-                <td>${periods.this_week.stats.data_quality.has_pixels} (${periods.this_week.stats.total_enriched > 0 ? Math.round(periods.this_week.stats.data_quality.has_pixels / periods.this_week.stats.total_enriched * 100) : 0}%)</td>
-                <td>${periods.last_week.stats.data_quality.has_pixels} (${periods.last_week.stats.total_enriched > 0 ? Math.round(periods.last_week.stats.data_quality.has_pixels / periods.last_week.stats.total_enriched * 100) : 0}%)</td>
+                <td>${primary.stats.data_quality.has_pixels} (${pixelRate(primary.stats)}%)</td>
+                <td>${comparison.stats.data_quality.has_pixels} (${pixelRate(comparison.stats)}%)</td>
               </tr>
               <tr>
                 <td><strong>Salesforce Updated</strong></td>
-                <td>${periods.today.stats.salesforce_updated} (${periods.today.stats.total_enriched > 0 ? Math.round(periods.today.stats.salesforce_updated / periods.today.stats.total_enriched * 100) : 0}%)</td>
-                <td>${periods.yesterday.stats.salesforce_updated} (${periods.yesterday.stats.total_enriched > 0 ? Math.round(periods.yesterday.stats.salesforce_updated / periods.yesterday.stats.total_enriched * 100) : 0}%)</td>
-                <td>${periods.this_week.stats.salesforce_updated} (${periods.this_week.stats.total_enriched > 0 ? Math.round(periods.this_week.stats.salesforce_updated / periods.this_week.stats.total_enriched * 100) : 0}%)</td>
-                <td>${periods.last_week.stats.salesforce_updated} (${periods.last_week.stats.total_enriched > 0 ? Math.round(periods.last_week.stats.salesforce_updated / periods.last_week.stats.total_enriched * 100) : 0}%)</td>
+                <td>${primary.stats.salesforce_updated} (${sfUpdateRate(primary.stats)}%)</td>
+                <td>${comparison.stats.salesforce_updated} (${sfUpdateRate(comparison.stats)}%)</td>
               </tr>
               <tr>
                 <td><strong>Success Rate</strong></td>
-                <td>${periods.today.stats.total_enriched > 0 ? Math.round(periods.today.stats.successful / periods.today.stats.total_enriched * 100) : 0}%</td>
-                <td>${periods.yesterday.stats.total_enriched > 0 ? Math.round(periods.yesterday.stats.successful / periods.yesterday.stats.total_enriched * 100) : 0}%</td>
-                <td>${periods.this_week.stats.total_enriched > 0 ? Math.round(periods.this_week.stats.successful / periods.this_week.stats.total_enriched * 100) : 0}%</td>
-                <td>${periods.last_week.stats.total_enriched > 0 ? Math.round(periods.last_week.stats.successful / periods.last_week.stats.total_enriched * 100) : 0}%</td>
+                <td>${successRate(primary.stats)}%</td>
+                <td>${successRate(comparison.stats)}%</td>
               </tr>
             </tbody>
           </table>
@@ -1379,7 +1426,7 @@
 
         <!-- Recent Enrichments -->
         <div class="card" style="margin-top: 20px;">
-          <h3>Recent Enrichments</h3>
+          <h3>Recent Enrichments (${primary.label})</h3>
           <table>
             <thead>
               <tr>
@@ -1404,15 +1451,15 @@
                   <td style="font-size: 12px; color: #6b7280;">${new Date(e.created_at).toLocaleString()}</td>
                 </tr>
               `).join('')}
-              ${recent_enrichments.length === 0 ? '<tr><td colspan="7" style="text-align: center; color: #6b7280;">No recent enrichments</td></tr>' : ''}
+              ${recent_enrichments.length === 0 ? '<tr><td colspan="7" style="text-align: center; color: #6b7280;">No enrichments in this period</td></tr>' : ''}
             </tbody>
           </table>
         </div>
       `;
 
       // Render charts
-      renderKPIHourlyChart(periods.today.hourly || []);
-      renderKPIWeeklyChart(periods.this_week.daily || [], periods.last_week.daily || []);
+      renderKPIHourlyChart(primary.hourly || []);
+      renderKPIDailyChart(primary.daily || []);
     }
 
     function renderKPIHourlyChart(hourlyData) {
@@ -1447,51 +1494,32 @@
       });
     }
 
-    function renderKPIWeeklyChart(thisWeekData, lastWeekData) {
-      const ctx = document.getElementById('kpiWeeklyChart');
+    function renderKPIDailyChart(dailyData) {
+      const ctx = document.getElementById('kpiDailyChart');
       if (!ctx) return;
-      if (kpiWeeklyChart) kpiWeeklyChart.destroy();
+      if (kpiDailyChart) kpiDailyChart.destroy();
 
-      const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-      // Map data by day of week
-      const thisWeekMap = new Map(thisWeekData.map(d => {
+      // Format dates for labels
+      const labels = dailyData.map(d => {
         const date = new Date(d.date);
-        const day = date.getDay();
-        return [day === 0 ? 6 : day - 1, d.count]; // Convert to Mon=0
-      }));
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      });
 
-      const lastWeekMap = new Map(lastWeekData.map(d => {
-        const date = new Date(d.date);
-        const day = date.getDay();
-        return [day === 0 ? 6 : day - 1, d.count];
-      }));
-
-      kpiWeeklyChart = new Chart(ctx, {
+      kpiDailyChart = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: dayNames,
-          datasets: [
-            {
-              label: 'This Week',
-              data: dayNames.map((_, i) => thisWeekMap.get(i) || 0),
-              backgroundColor: '#10b981',
-              borderRadius: 4,
-            },
-            {
-              label: 'Last Week',
-              data: dayNames.map((_, i) => lastWeekMap.get(i) || 0),
-              backgroundColor: '#d1d5db',
-              borderRadius: 4,
-            }
-          ]
+          labels: labels,
+          datasets: [{
+            label: 'Enrichments',
+            data: dailyData.map(d => d.count),
+            backgroundColor: '#10b981',
+            borderRadius: 4,
+          }]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: {
-            legend: { position: 'top', labels: { usePointStyle: true } }
-          },
+          plugins: { legend: { display: false } },
           scales: {
             y: { beginAtZero: true, grid: { color: '#f0f0f0' } },
             x: { grid: { display: false } }
