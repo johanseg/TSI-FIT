@@ -31,6 +31,8 @@ export interface GooglePlacesData {
   gmb_state?: string;
   gmb_zip?: string;
   gmb_types?: string[]; // For determining commercial vs residential
+  // Flag to indicate GMB address should overwrite lead address (high-confidence phone + name match)
+  shouldOverwriteAddress?: boolean;
 }
 
 // Legacy Clay interface - kept for backwards compatibility with existing DB records

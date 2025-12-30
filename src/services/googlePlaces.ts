@@ -25,6 +25,72 @@ const INVALID_WEBSITE_DOMAINS = [
   'foursquare.com',
 ];
 
+// Business suffixes to remove for fuzzy name matching
+const BUSINESS_SUFFIXES = [
+  'llc', 'llp', 'inc', 'corp', 'corporation', 'co', 'company',
+  'ltd', 'limited', 'plc', 'pllc', 'pc', 'pa', 'dba',
+  'enterprises', 'services', 'solutions', 'group', 'holdings',
+];
+
+/**
+ * Normalize business name for fuzzy matching
+ * Removes common suffixes like LLC, Inc, Corp and normalizes whitespace
+ */
+function normalizeBusinessName(name: string): string {
+  let normalized = name.toLowerCase().trim();
+
+  // Remove punctuation and special characters
+  normalized = normalized.replace(/[.,'"!@#$%^&*()_+=\[\]{}|\\/<>?;:]/g, ' ');
+
+  // Remove business suffixes
+  for (const suffix of BUSINESS_SUFFIXES) {
+    // Match suffix at end of string or followed by space
+    const suffixPattern = new RegExp(`\\b${suffix}\\b`, 'gi');
+    normalized = normalized.replace(suffixPattern, '');
+  }
+
+  // Collapse multiple spaces and trim
+  normalized = normalized.replace(/\s+/g, ' ').trim();
+
+  return normalized;
+}
+
+/**
+ * Check if two business names match using fuzzy matching
+ * Returns true if names are similar enough to be considered the same business
+ */
+function fuzzyBusinessNameMatch(inputName: string, gmbName: string): boolean {
+  const normalizedInput = normalizeBusinessName(inputName);
+  const normalizedGmb = normalizeBusinessName(gmbName);
+
+  // Exact match after normalization
+  if (normalizedInput === normalizedGmb) {
+    return true;
+  }
+
+  // One contains the other (handles partial matches)
+  if (normalizedInput.includes(normalizedGmb) || normalizedGmb.includes(normalizedInput)) {
+    return true;
+  }
+
+  // Check if first significant words match (e.g., "ABC Roofing" vs "ABC Roofing Services")
+  const inputWords = normalizedInput.split(' ').filter(w => w.length > 1);
+  const gmbWords = normalizedGmb.split(' ').filter(w => w.length > 1);
+
+  if (inputWords.length > 0 && gmbWords.length > 0) {
+    // Check if the first 1-2 significant words match
+    const matchingWords = inputWords.filter(w => gmbWords.includes(w));
+    const minWords = Math.min(inputWords.length, gmbWords.length);
+
+    // If at least 50% of the shorter name's words match, consider it a match
+    if (matchingWords.length >= Math.ceil(minWords * 0.5)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /**
  * Check if a URL is a valid business website (not a social media or directory listing)
  */
@@ -306,18 +372,23 @@ export class GooglePlacesService {
       }
 
       // Validate the match by counting matching data points
-      // We need at least 1 matching data point to accept the result
+      // Include businessName for high-confidence phone + name matching
       const matchScore = this.calculateMatchScore(
-        { phone, city, state, zip, website },
+        { phone, city, state, zip, website, businessName },
         placeDetails
       );
 
-      if (matchScore.score < 1) {
+      // Accept if score >= 1 OR if we have high-confidence phone + name match
+      const isHighConfidenceMatch = matchScore.isPhoneMatch && matchScore.isBusinessNameMatch;
+
+      if (matchScore.score < 1 && !isHighConfidenceMatch) {
         logger.warn('GMB match score too low - discarding result', {
           businessName,
           matchScore: matchScore.score,
           matchedFields: matchScore.matchedFields,
           foundName: placeDetails.gmb_name,
+          isPhoneMatch: matchScore.isPhoneMatch,
+          isBusinessNameMatch: matchScore.isBusinessNameMatch,
         });
         return null;
       }
@@ -327,9 +398,15 @@ export class GooglePlacesService {
         matchScore: matchScore.score,
         matchedFields: matchScore.matchedFields,
         foundName: placeDetails.gmb_name,
+        isHighConfidenceMatch,
+        shouldOverwriteAddress: matchScore.shouldOverwriteAddress,
       });
 
-      return placeDetails;
+      // Return place details with the shouldOverwriteAddress flag
+      return {
+        ...placeDetails,
+        shouldOverwriteAddress: matchScore.shouldOverwriteAddress,
+      };
     } catch (error) {
       logger.error('Google Places enrichment failed', {
         error: error instanceof Error ? error.message : String(error),
@@ -340,20 +417,48 @@ export class GooglePlacesService {
   }
 
   /**
+   * Match score result with additional flags for high-confidence matching
+   */
+  public static MatchScoreResult: undefined;
+
+  /**
    * Calculate match score between input data and GMB result
-   * Returns a score (number of matching fields) and list of matched fields
+   * Returns a score, matched fields, and flags for high-confidence matching
+   *
+   * HIGH CONFIDENCE MATCHING:
+   * When phone matches AND business name fuzzy-matches, we treat GMB as authoritative.
+   * This overrides state mismatch rejection and triggers address overwrite.
    */
   private calculateMatchScore(
-    input: { phone?: string; city?: string; state?: string; zip?: string; website?: string },
+    input: { phone?: string; city?: string; state?: string; zip?: string; website?: string; businessName?: string },
     gmbResult: GooglePlacesData
-  ): { score: number; matchedFields: string[] } {
+  ): {
+    score: number;
+    matchedFields: string[];
+    isPhoneMatch: boolean;
+    isBusinessNameMatch: boolean;
+    hasStateMismatch: boolean;
+    shouldOverwriteAddress: boolean;
+  } {
     const matchedFields: string[] = [];
+    let isPhoneMatch = false;
+    let isBusinessNameMatch = false;
+    let hasStateMismatch = false;
+    let shouldOverwriteAddress = false;
 
     // Normalize phone numbers for comparison (remove non-digits)
     const normalizePhone = (p?: string) => p?.replace(/\D/g, '') || '';
 
+    // Check business name match (fuzzy)
+    if (input.businessName && gmbResult.gmb_name) {
+      isBusinessNameMatch = fuzzyBusinessNameMatch(input.businessName, gmbResult.gmb_name);
+      if (isBusinessNameMatch) {
+        matchedFields.push('businessName');
+      }
+    }
+
     // Check phone match (worth 2 points - very reliable)
-    // Phone mismatch is also a strong negative signal
+    // Phone match is HIGH CONFIDENCE - overrides state mismatch
     if (input.phone && gmbResult.gmb_phone) {
       const inputPhone = normalizePhone(input.phone);
       const gmbPhone = normalizePhone(gmbResult.gmb_phone);
@@ -361,27 +466,65 @@ export class GooglePlacesService {
       if (inputPhone.length >= 10 && gmbPhone.length >= 10) {
         if (inputPhone.includes(gmbPhone.slice(-10)) || gmbPhone.includes(inputPhone.slice(-10))) {
           matchedFields.push('phone');
+          isPhoneMatch = true;
+          logger.info('Phone match detected - high confidence GMB match', {
+            inputPhone: input.phone,
+            gmbPhone: gmbResult.gmb_phone,
+          });
         } else {
           // Phone numbers don't match - this is a strong negative signal
-          // Different phone = likely different business
+          // Different phone = likely different business (ALWAYS reject)
           logger.warn('Phone mismatch detected - likely wrong GMB match', {
             inputPhone: input.phone,
             gmbPhone: gmbResult.gmb_phone,
           });
-          return { score: -10, matchedFields: ['PHONE_MISMATCH'] };
+          return {
+            score: -10,
+            matchedFields: ['PHONE_MISMATCH'],
+            isPhoneMatch: false,
+            isBusinessNameMatch,
+            hasStateMismatch: false,
+            shouldOverwriteAddress: false
+          };
         }
       }
     }
 
     // Check state match (worth 1 point)
+    // If phone matches, we DON'T reject on state mismatch - instead flag for address overwrite
     if (input.state && gmbResult.gmb_state) {
       const inputState = input.state.toUpperCase().trim();
       const gmbState = gmbResult.gmb_state.toUpperCase().trim();
       if (inputState === gmbState) {
         matchedFields.push('state');
       } else {
-        // State mismatch is a strong negative signal
-        return { score: -10, matchedFields: ['STATE_MISMATCH'] };
+        hasStateMismatch = true;
+
+        // HIGH CONFIDENCE: If phone AND business name match, override state mismatch
+        if (isPhoneMatch && isBusinessNameMatch) {
+          logger.info('State mismatch overridden by phone + business name match - will overwrite address from GMB', {
+            inputState: input.state,
+            gmbState: gmbResult.gmb_state,
+            businessName: input.businessName,
+            gmbName: gmbResult.gmb_name,
+          });
+          shouldOverwriteAddress = true;
+          // Don't reject - continue scoring
+        } else {
+          // No high-confidence match - state mismatch is a rejection
+          logger.warn('State mismatch without phone match - rejecting GMB result', {
+            inputState: input.state,
+            gmbState: gmbResult.gmb_state,
+          });
+          return {
+            score: -10,
+            matchedFields: ['STATE_MISMATCH'],
+            isPhoneMatch,
+            isBusinessNameMatch,
+            hasStateMismatch: true,
+            shouldOverwriteAddress: false
+          };
+        }
       }
     }
 
@@ -416,7 +559,14 @@ export class GooglePlacesService {
       }
     }
 
-    return { score: matchedFields.length, matchedFields };
+    return {
+      score: matchedFields.length,
+      matchedFields,
+      isPhoneMatch,
+      isBusinessNameMatch,
+      hasStateMismatch,
+      shouldOverwriteAddress
+    };
   }
 
   /**

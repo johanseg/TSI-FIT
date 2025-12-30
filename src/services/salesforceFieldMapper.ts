@@ -28,6 +28,7 @@ export function mapToSalesforceFields(
   websiteUrl?: string
 ): SalesforceEnrichmentFields {
   const googlePlaces = enrichmentData.google_places;
+  const pdl = enrichmentData.pdl;
   const clay = enrichmentData.clay;
   const websiteTech = enrichmentData.website_tech;
 
@@ -35,13 +36,17 @@ export function mapToSalesforceFields(
   const has_website = !!(websiteTech || websiteUrl || googlePlaces?.gmb_website);
 
   // Number_of_Employees__c - Map employee estimate to picklist
-  const number_of_employees = mapEmployeeCount(clay?.employee_estimate);
+  // Priority: PDL employee_count > Clay employee_estimate
+  const employeeCount = pdl?.employee_count ?? clay?.employee_estimate;
+  const number_of_employees = mapEmployeeCount(employeeCount);
 
   // Number_of_GBP_Reviews__c - Map review count to picklist
   const number_of_gbp_reviews = mapGBPReviews(googlePlaces?.gmb_review_count);
 
   // Number_of_Years_in_Business__c - Map years to picklist
-  const number_of_years_in_business = mapYearsInBusiness(clay?.years_in_business);
+  // Priority: PDL years_in_business > Clay years_in_business
+  const yearsInBusiness = pdl?.years_in_business ?? clay?.years_in_business;
+  const number_of_years_in_business = mapYearsInBusiness(yearsInBusiness);
 
   // Has_GMB__c - True if we found a Google Business Profile
   const has_gmb = !!(googlePlaces?.place_id);
@@ -58,7 +63,8 @@ export function mapToSalesforceFields(
   const business_license = null;
 
   // Spending_on_Marketing__c - True if domain age > 2 years AND has advertising pixels
-  const spending_on_marketing = determineSpendingOnMarketing(clay, websiteTech);
+  // Use PDL years_in_business for domain age check, fallback to Clay
+  const spending_on_marketing = determineSpendingOnMarketing(pdl, clay, websiteTech);
 
   return {
     has_website,
@@ -436,11 +442,14 @@ export function mapGMBTypesToVertical(gmbTypes?: string[]): LeadVerticalPicklist
  * Criteria: domain age > 2 years AND has advertising pixels (Meta, Google Ads, TikTok)
  */
 function determineSpendingOnMarketing(
+  pdl?: EnrichmentData['pdl'],
   clay?: EnrichmentData['clay'],
   websiteTech?: EnrichmentData['website_tech']
 ): boolean {
   // Check if business has been around for more than 2 years
-  const domainAgeOver2Years = (clay?.years_in_business ?? 0) > 2;
+  // Priority: PDL years_in_business > Clay years_in_business
+  const yearsInBusiness = pdl?.years_in_business ?? clay?.years_in_business ?? 0;
+  const domainAgeOver2Years = yearsInBusiness > 2;
 
   // Check if has advertising pixels
   const hasAdvertisingPixels = !!(
@@ -466,13 +475,43 @@ export interface GMBFilledFields {
 }
 
 /**
+ * Result of GMB field filling operation
+ */
+export interface GMBFilledResult {
+  fields: GMBFilledFields;
+  addressWasOverwritten: boolean;
+  auditNote?: string;
+}
+
+/**
+ * Generate audit note for address overwrite
+ */
+export function generateAddressOverwriteNote(
+  originalAddress: { city?: string; state?: string; zip?: string },
+  gmbAddress: { city?: string; state?: string; zip?: string }
+): string {
+  const original = [originalAddress.city, originalAddress.state, originalAddress.zip]
+    .filter(Boolean)
+    .join(', ') || '(empty)';
+  const updated = [gmbAddress.city, gmbAddress.state, gmbAddress.zip]
+    .filter(Boolean)
+    .join(', ') || '(empty)';
+
+  const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+  return `[TSI Auto-Enrichment ${timestamp}] Address corrected from GMB (phone match). Original: ${original} → Updated: ${updated}`;
+}
+
+/**
  * Get fields from GMB data to update in Salesforce
  * GMB data is used to fill missing fields, but we preserve the original phone number
  * since phone is a primary identifier from the lead submission
+ *
+ * When shouldOverwriteAddress is true (high-confidence phone + name match),
+ * address fields are always filled from GMB, even if lead has existing values.
  */
 export function getFilledFieldsFromGMB(
   googlePlaces: GooglePlacesData | undefined,
-  _originalLead: {
+  originalLead: {
     website?: string;
     phone?: string;
     address?: string;
@@ -480,14 +519,18 @@ export function getFilledFieldsFromGMB(
     state?: string;
     zip?: string;
   }
-): GMBFilledFields {
+): GMBFilledResult {
   const filled: GMBFilledFields = {};
+  let addressWasOverwritten = false;
+  let auditNote: string | undefined;
 
   if (!googlePlaces) {
-    return filled;
+    return { fields: filled, addressWasOverwritten, auditNote };
   }
 
-  // Use GMB data for website and address fields
+  const shouldOverwriteAddress = googlePlaces.shouldOverwriteAddress === true;
+
+  // Use GMB data for website
   // NOTE: We intentionally DO NOT include phone - the lead's phone is a primary identifier
   // and should not be overwritten by GMB data (which may be from a wrong match)
   if (googlePlaces.gmb_website) {
@@ -499,23 +542,57 @@ export function getFilledFieldsFromGMB(
   //   filled.phone = googlePlaces.gmb_phone;
   // }
 
+  // Address fields: Always fill from GMB if shouldOverwriteAddress is true
+  // Otherwise, only fill if lead field is empty/missing
   if (googlePlaces.gmb_address) {
-    filled.address = googlePlaces.gmb_address;
+    if (shouldOverwriteAddress || !originalLead.address) {
+      filled.address = googlePlaces.gmb_address;
+    }
   }
 
   if (googlePlaces.gmb_city) {
-    filled.city = googlePlaces.gmb_city;
+    if (shouldOverwriteAddress || !originalLead.city) {
+      filled.city = googlePlaces.gmb_city;
+    }
   }
 
   if (googlePlaces.gmb_state) {
-    filled.state = googlePlaces.gmb_state;
+    if (shouldOverwriteAddress || !originalLead.state) {
+      filled.state = googlePlaces.gmb_state;
+    }
   }
 
   if (googlePlaces.gmb_zip) {
-    filled.zip = googlePlaces.gmb_zip;
+    if (shouldOverwriteAddress || !originalLead.zip) {
+      filled.zip = googlePlaces.gmb_zip;
+    }
   }
 
-  return filled;
+  // Check if we actually overwrote any address fields that had values
+  if (shouldOverwriteAddress) {
+    const hadExistingAddress = originalLead.city || originalLead.state || originalLead.zip;
+    const gmbHasAddress = googlePlaces.gmb_city || googlePlaces.gmb_state || googlePlaces.gmb_zip;
+
+    if (hadExistingAddress && gmbHasAddress) {
+      // Check if any field actually changed
+      const stateChanged = originalLead.state && googlePlaces.gmb_state &&
+        originalLead.state.toUpperCase().trim() !== googlePlaces.gmb_state.toUpperCase().trim();
+      const cityChanged = originalLead.city && googlePlaces.gmb_city &&
+        originalLead.city.toLowerCase().trim() !== googlePlaces.gmb_city.toLowerCase().trim();
+      const zipChanged = originalLead.zip && googlePlaces.gmb_zip &&
+        originalLead.zip.trim() !== googlePlaces.gmb_zip.trim();
+
+      if (stateChanged || cityChanged || zipChanged) {
+        addressWasOverwritten = true;
+        auditNote = generateAddressOverwriteNote(
+          { city: originalLead.city, state: originalLead.state, zip: originalLead.zip },
+          { city: googlePlaces.gmb_city, state: googlePlaces.gmb_state, zip: googlePlaces.gmb_zip }
+        );
+      }
+    }
+  }
+
+  return { fields: filled, addressWasOverwritten, auditNote };
 }
 
 /**
@@ -529,7 +606,8 @@ export function formatForSalesforceUpdate(
   _phone?: string, // Unused - phone is preserved from original lead
   filledFromGMB?: GMBFilledFields,
   fitScore?: number,
-  gmbTypes?: string[]
+  gmbTypes?: string[],
+  auditNote?: string // Optional audit note to append to Notes__c
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {
     Has_Website__c: fields.has_website,
@@ -578,6 +656,11 @@ export function formatForSalesforceUpdate(
   }
   if (filledFromGMB?.zip) {
     result.PostalCode = filledFromGMB.zip;
+  }
+
+  // Add audit note to Notes__c if provided (e.g., address corrected from GMB)
+  if (auditNote) {
+    result.Notes__c = auditNote;
   }
 
   return result;

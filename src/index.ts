@@ -411,12 +411,14 @@ app.post('/api/enrich-by-id', async (req, res) => {
       }
 
       // Get fields that can be filled from GMB data
-      const filledFromGMB = getFilledFieldsFromGMB(enrichmentData.google_places, {
+      const gmbResult = getFilledFieldsFromGMB(enrichmentData.google_places, {
         website: lead.Website,
         phone: lead.Phone,
         city: lead.City,
         state: lead.State,
       });
+      const filledFromGMB = gmbResult.fields;
+      const gmbAuditNote = gmbResult.auditNote;
 
       // Use GMB-filled website for tech detection if original is missing
       const websiteForTech = lead.Website || filledFromGMB.website;
@@ -468,7 +470,8 @@ app.post('/api/enrich-by-id', async (req, res) => {
             lead.Phone,
             filledFromGMB,
             fitScoreResult.fit_score,
-            enrichmentData.google_places?.gmb_types
+            enrichmentData.google_places?.gmb_types,
+            gmbAuditNote
           );
           const sfResult = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult, sfUpdateFields);
           salesforceUpdated = sfResult.success;
@@ -947,12 +950,14 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
         }
 
         // Get fields that can be filled from GMB data
-        const filledFromGMB = getFilledFieldsFromGMB(enrichmentData.google_places, {
+        const gmbResult = getFilledFieldsFromGMB(enrichmentData.google_places, {
           website: lead.website || undefined,
           phone: lead.phone || undefined,
           city: lead.city || undefined,
           state: lead.state || undefined,
         });
+        const filledFromGMB = gmbResult.fields;
+        const gmbAuditNote = gmbResult.auditNote;
 
         // Use GMB-filled website for tech detection if original is missing
         const websiteForTech = lead.website || filledFromGMB.website;
@@ -995,7 +1000,8 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
           lead.phone || undefined,
           filledFromGMB,
           fitScoreResult.fit_score,
-          enrichmentData.google_places?.gmb_types
+          enrichmentData.google_places?.gmb_types,
+          gmbAuditNote
         );
 
         // Step 6: Update Salesforce
@@ -1115,12 +1121,14 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
       }
 
       // Get fields that can be filled from GMB data
-      const filledFromGMB = getFilledFieldsFromGMB(enrichmentData.google_places, {
+      const gmbResult = getFilledFieldsFromGMB(enrichmentData.google_places, {
         website: payload.website,
         phone: payload.phone,
         city: payload.city,
         state: payload.state,
       });
+      const filledFromGMB = gmbResult.fields;
+      const gmbAuditNote = gmbResult.auditNote;
 
       // Use GMB-filled website for tech detection if original is missing
       const websiteForTech = payload.website || filledFromGMB.website;
@@ -1380,12 +1388,14 @@ app.post('/api/workato/enrich', authenticateApiKey, async (req, res) => {
       }
 
       // Get fields that can be filled from GMB data
-      const filledFromGMB = getFilledFieldsFromGMB(enrichmentData.google_places, {
+      const gmbResult = getFilledFieldsFromGMB(enrichmentData.google_places, {
         website: lead.Website,
         phone: lead.Phone,
         city: lead.City,
         state: lead.State,
       });
+      const filledFromGMB = gmbResult.fields;
+      const gmbAuditNote = gmbResult.auditNote;
 
       // Use GMB-filled website for tech detection if original is missing
       const websiteForTech = lead.Website || filledFromGMB.website;
@@ -1435,7 +1445,8 @@ app.post('/api/workato/enrich', authenticateApiKey, async (req, res) => {
           lead.Phone,
           filledFromGMB,
           fitScoreResult.fit_score,
-          enrichmentData.google_places?.gmb_types
+          enrichmentData.google_places?.gmb_types,
+          gmbAuditNote
         );
         const sfResult = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult, sfUpdateFields);
         salesforceUpdated = sfResult.success;
