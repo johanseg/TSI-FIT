@@ -88,6 +88,30 @@ function fuzzyBusinessNameMatch(inputName: string, gmbName: string): boolean {
     }
   }
 
+  // Handle "The" prefix variations (e.g., "The Paint Spot" vs "Paint Spot")
+  const inputWithoutThe = normalizedInput.replace(/^the\s+/i, '');
+  const gmbWithoutThe = normalizedGmb.replace(/^the\s+/i, '');
+  if (inputWithoutThe !== normalizedInput || gmbWithoutThe !== normalizedGmb) {
+    // One had "The" prefix, compare without it
+    if (inputWithoutThe === gmbWithoutThe) {
+      return true;
+    }
+    // Also check containment without "The"
+    if (inputWithoutThe.includes(gmbWithoutThe) || gmbWithoutThe.includes(inputWithoutThe)) {
+      return true;
+    }
+  }
+
+  // Handle numeric suffixes (e.g., "Company 1" vs "Company", "Business 2" vs "Business")
+  const inputWithoutNumbers = normalizedInput.replace(/\s*\d+\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  const gmbWithoutNumbers = normalizedGmb.replace(/\s*\d+\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  if (inputWithoutNumbers !== normalizedInput || gmbWithoutNumbers !== normalizedGmb) {
+    // One had numbers, compare without them
+    if (inputWithoutNumbers === gmbWithoutNumbers) {
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -104,6 +128,35 @@ function isValidBusinessWebsite(url: string | undefined): boolean {
     );
   } catch {
     return false;
+  }
+}
+
+/**
+ * Extract a readable business name from a website domain
+ * e.g., "acmeroofing.com" → "acme roofing", "dr-smith-dental.net" → "dr smith dental"
+ */
+function extractBusinessNameFromDomain(url: string): string | null {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase().replace('www.', '');
+    const domain = hostname.split('.')[0]; // Get name before TLD
+
+    // Skip if too short or generic
+    if (domain.length < 4) return null;
+    const genericDomains = ['mail', 'shop', 'store', 'info', 'home', 'site', 'web', 'page', 'online'];
+    if (genericDomains.includes(domain)) return null;
+
+    // Convert camelCase to spaces and replace hyphens/underscores
+    const spaced = domain
+      .replace(/([a-z])([A-Z])/g, '$1 $2') // camelCase → camel Case
+      .replace(/[-_]/g, ' ')               // kebab-case → kebab case
+      .trim();
+
+    // Skip if result is still too short or same as original
+    if (spaced.length < 4) return null;
+
+    return spaced;
+  } catch {
+    return null;
   }
 }
 
@@ -225,7 +278,61 @@ export class GooglePlacesService {
       }
     }
 
-    // Strategy 8: Last resort - just business name (least accurate)
+    // Strategy 8: Try abbreviated business name (first 2-3 words) for long names
+    // Long business names often fail to match, but the first words are often enough
+    const nameWords = businessName.split(/\s+/).filter(w => w.length > 1);
+    if (nameWords.length >= 3) {
+      const abbreviatedName = nameWords.slice(0, 3).join(' ');
+
+      // Try abbreviated name with city/state
+      if (city && state) {
+        await this.rateLimit();
+        const placeId = await this.searchForPlace(`${abbreviatedName} ${city}, ${state}`);
+        if (placeId) {
+          logger.info('Found place by abbreviated name + city/state', { abbreviatedName, city, state });
+          return placeId;
+        }
+      }
+
+      // Try abbreviated name with zip
+      if (zip) {
+        await this.rateLimit();
+        const placeId = await this.searchForPlace(`${abbreviatedName} ${zip}`);
+        if (placeId) {
+          logger.info('Found place by abbreviated name + zip', { abbreviatedName, zip });
+          return placeId;
+        }
+      }
+    }
+
+    // Strategy 9: Try website domain as a business name search
+    // Sometimes the domain name itself is more recognizable than the company name
+    if (website) {
+      const domainBusinessName = extractBusinessNameFromDomain(website);
+      if (domainBusinessName && domainBusinessName.toLowerCase() !== businessName.toLowerCase()) {
+        // Try domain-derived name with city/state
+        if (city && state) {
+          await this.rateLimit();
+          const placeId = await this.searchForPlace(`${domainBusinessName} ${city}, ${state}`);
+          if (placeId) {
+            logger.info('Found place by domain-derived name + city/state', { domainBusinessName, city, state });
+            return placeId;
+          }
+        }
+
+        // Try domain-derived name with zip
+        if (zip) {
+          await this.rateLimit();
+          const placeId = await this.searchForPlace(`${domainBusinessName} ${zip}`);
+          if (placeId) {
+            logger.info('Found place by domain-derived name + zip', { domainBusinessName, zip });
+            return placeId;
+          }
+        }
+      }
+    }
+
+    // Strategy 10: Last resort - just business name (least accurate)
     await this.rateLimit();
     const placeId = await this.searchForPlace(businessName);
     if (placeId) {
@@ -500,7 +607,11 @@ export class GooglePlacesService {
       } else {
         hasStateMismatch = true;
 
-        // HIGH CONFIDENCE: If phone AND business name match, override state mismatch
+        // Check if zip matches - zip is more reliable than IP-guessed state from LanderLab
+        const zipMatches = input.zip && gmbResult.gmb_zip &&
+          input.zip.trim() === gmbResult.gmb_zip.trim();
+
+        // HIGH CONFIDENCE: Accept if phone + name match, OR if zip matches
         if (isPhoneMatch && isBusinessNameMatch) {
           logger.info('State mismatch overridden by phone + business name match - will overwrite address from GMB', {
             inputState: input.state,
@@ -510,11 +621,23 @@ export class GooglePlacesService {
           });
           shouldOverwriteAddress = true;
           // Don't reject - continue scoring
-        } else {
-          // No high-confidence match - state mismatch is a rejection
-          logger.warn('State mismatch without phone match - rejecting GMB result', {
+        } else if (zipMatches) {
+          // Zip match is high confidence - IP-guessed state is often wrong
+          logger.info('State mismatch overridden by zip match - trusting GMB address', {
             inputState: input.state,
             gmbState: gmbResult.gmb_state,
+            matchedZip: input.zip,
+          });
+          shouldOverwriteAddress = true;
+          matchedFields.push('zip'); // Count zip as a matched field
+          // Don't reject - continue scoring
+        } else {
+          // No high-confidence match - state mismatch is a rejection
+          logger.warn('State mismatch without phone or zip match - rejecting GMB result', {
+            inputState: input.state,
+            gmbState: gmbResult.gmb_state,
+            inputZip: input.zip,
+            gmbZip: gmbResult.gmb_zip,
           });
           return {
             score: -10,
