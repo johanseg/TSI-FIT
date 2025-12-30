@@ -902,8 +902,8 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
     return res.status(400).json({ error: 'lead_ids array is required' });
   }
 
-  if (lead_ids.length > 10) {
-    return res.status(400).json({ error: 'Maximum 10 leads per batch' });
+  if (lead_ids.length > 50) {
+    return res.status(400).json({ error: 'Maximum 50 leads per batch' });
   }
 
   const salesforce = getSalesforceService();
