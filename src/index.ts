@@ -894,9 +894,150 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
   }
 });
 
-// Batch enrich leads and update Salesforce (no auth - internal dashboard)
+// Helper function to process a single lead enrichment
+async function enrichSingleLead(
+  lead: { id: string; company: string; phone?: string | null; city?: string | null; state?: string | null; website?: string | null; street?: string | null; postalCode?: string | null },
+  salesforce: SalesforceService,
+  pool: Pool
+): Promise<{ id: string; success: boolean; fit_score?: number; error?: string; duration_ms?: number }> {
+  const startTime = Date.now();
+  const requestId = uuidv4();
+
+  try {
+    const enrichmentData: EnrichmentData = {};
+
+    // Initialize services
+    const googlePlaces = new GooglePlacesService(process.env.GOOGLE_PLACES_API_KEY || '');
+    const pdl = new PeopleDataLabsService(process.env.PDL_API_KEY || '');
+    const websiteTech = new WebsiteTechService();
+
+    try {
+      // Step 1: Google Places enrichment
+      try {
+        const googlePlacesData = await googlePlaces.enrich(
+          lead.company,
+          lead.phone || undefined,
+          lead.city || undefined,
+          lead.state || undefined,
+          lead.website || undefined,
+          lead.street || undefined,
+          lead.postalCode || undefined
+        );
+        if (googlePlacesData) {
+          enrichmentData.google_places = googlePlacesData;
+        }
+      } catch (error) {
+        logger.warn('Google Places enrichment failed', { leadId: lead.id, error });
+      }
+
+      // Get fields that can be filled from GMB data
+      const gmbResult = getFilledFieldsFromGMB(enrichmentData.google_places, {
+        website: lead.website || undefined,
+        phone: lead.phone || undefined,
+        city: lead.city || undefined,
+        state: lead.state || undefined,
+      });
+      const filledFromGMB = gmbResult.fields;
+      const gmbAuditNote = gmbResult.auditNote;
+
+      // Use GMB-filled website for tech detection if original is missing
+      const websiteForTech = lead.website || filledFromGMB.website;
+
+      // Step 2: Website tech detection
+      if (websiteForTech) {
+        try {
+          const websiteTechData = await websiteTech.detectTech(websiteForTech);
+          enrichmentData.website_tech = websiteTechData;
+        } catch (error) {
+          logger.warn('Website tech detection failed', { leadId: lead.id, error });
+        }
+      }
+
+      // Step 3: PDL Company Enrichment
+      try {
+        const pdlData = await pdl.enrichCompany({
+          lead_id: requestId,
+          business_name: lead.company,
+          website: websiteForTech,
+          phone: lead.phone || filledFromGMB.phone,
+          city: lead.city || filledFromGMB.city,
+          state: lead.state || filledFromGMB.state,
+        });
+        if (pdlData) {
+          enrichmentData.pdl = pdlData;
+        }
+      } catch (error) {
+        logger.warn('PDL enrichment failed', { leadId: lead.id, error });
+      }
+
+      // Step 4: Calculate Fit Score
+      const fitScoreResult = calculateFitScore(enrichmentData);
+
+      // Step 5: Map to Salesforce-aligned fields
+      const sfFields = mapToSalesforceFields(enrichmentData, websiteForTech);
+      const sfUpdateFields = formatForSalesforceUpdate(
+        sfFields,
+        lead.website || undefined,
+        lead.phone || undefined,
+        filledFromGMB,
+        fitScoreResult.fit_score,
+        enrichmentData.google_places?.gmb_types,
+        gmbAuditNote
+      );
+
+      // Step 6: Update Salesforce
+      const sfResult = await salesforce.updateLead(lead.id, enrichmentData, fitScoreResult, sfUpdateFields);
+
+      // Store in local database
+      try {
+        await pool.query(
+          `INSERT INTO lead_enrichments (
+            salesforce_lead_id, job_id, enrichment_status,
+            google_places_data, pdl_data, website_tech_data,
+            fit_score, score_breakdown, salesforce_updated
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            lead.id,
+            requestId,
+            'completed',
+            enrichmentData.google_places ? JSON.stringify(enrichmentData.google_places) : null,
+            enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
+            enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
+            fitScoreResult.fit_score,
+            JSON.stringify(fitScoreResult.score_breakdown),
+            sfResult.success,
+          ]
+        );
+      } catch (dbError) {
+        logger.error('Failed to store enrichment record', { leadId: lead.id, error: dbError });
+      }
+
+      const duration = Date.now() - startTime;
+      if (sfResult.success) {
+        return { id: lead.id, success: true, fit_score: fitScoreResult.fit_score, duration_ms: duration };
+      } else {
+        const errorMsg = sfResult.error
+          ? `${sfResult.error.code}: ${sfResult.error.message}`
+          : 'Failed to update Salesforce';
+        return { id: lead.id, success: false, error: errorMsg, duration_ms: duration };
+      }
+    } finally {
+      await websiteTech.close();
+    }
+  } catch (error) {
+    return {
+      id: lead.id,
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      duration_ms: Date.now() - startTime,
+    };
+  }
+}
+
+// Batch enrich leads with PARALLEL processing (concurrency limit: 5)
 app.post('/api/dashboard/enrich-batch', async (req, res) => {
-  const { lead_ids } = req.body;
+  const { lead_ids, concurrency = 5 } = req.body;
+  const startTime = Date.now();
 
   if (!Array.isArray(lead_ids) || lead_ids.length === 0) {
     return res.status(400).json({ error: 'lead_ids array is required' });
@@ -905,6 +1046,9 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
   if (lead_ids.length > 50) {
     return res.status(400).json({ error: 'Maximum 50 leads per batch' });
   }
+
+  // Limit concurrency to prevent overloading
+  const maxConcurrency = Math.min(Math.max(1, concurrency), 10);
 
   const salesforce = getSalesforceService();
   const dashboardService = new DashboardStatsService(salesforce);
@@ -917,153 +1061,48 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
     return res.status(404).json({ error: 'No matching leads found' });
   }
 
-  const results: Array<{ id: string; success: boolean; fit_score?: number; error?: string }> = [];
+  logger.info('Starting parallel batch enrichment', {
+    totalLeads: leadsToEnrich.length,
+    concurrency: maxConcurrency,
+  });
 
-  for (const lead of leadsToEnrich) {
-    const requestId = uuidv4();
+  // Process leads in parallel with concurrency limit
+  const results: Array<{ id: string; success: boolean; fit_score?: number; error?: string; duration_ms?: number }> = [];
 
-    try {
-      const enrichmentData: EnrichmentData = {};
+  // Process in chunks based on concurrency
+  for (let i = 0; i < leadsToEnrich.length; i += maxConcurrency) {
+    const chunk = leadsToEnrich.slice(i, i + maxConcurrency);
+    const chunkResults = await Promise.all(
+      chunk.map(lead => enrichSingleLead(lead, salesforce, pool))
+    );
+    results.push(...chunkResults);
 
-      // Initialize services
-      const googlePlaces = new GooglePlacesService(process.env.GOOGLE_PLACES_API_KEY || '');
-      const pdl = new PeopleDataLabsService(process.env.PDL_API_KEY || '');
-      const websiteTech = new WebsiteTechService();
-
-      try {
-        // Step 1: Google Places enrichment (first priority - use all available data)
-        try {
-          const googlePlacesData = await googlePlaces.enrich(
-            lead.company,
-            lead.phone || undefined,
-            lead.city || undefined,
-            lead.state || undefined,
-            lead.website || undefined,
-            lead.street || undefined,
-            lead.postalCode || undefined
-          );
-          if (googlePlacesData) {
-            enrichmentData.google_places = googlePlacesData;
-          }
-        } catch (error) {
-          logger.warn('Google Places enrichment failed', { leadId: lead.id, error });
-        }
-
-        // Get fields that can be filled from GMB data
-        const gmbResult = getFilledFieldsFromGMB(enrichmentData.google_places, {
-          website: lead.website || undefined,
-          phone: lead.phone || undefined,
-          city: lead.city || undefined,
-          state: lead.state || undefined,
-        });
-        const filledFromGMB = gmbResult.fields;
-        const gmbAuditNote = gmbResult.auditNote;
-
-        // Use GMB-filled website for tech detection if original is missing
-        const websiteForTech = lead.website || filledFromGMB.website;
-
-        // Step 2: Website tech detection
-        if (websiteForTech) {
-          try {
-            const websiteTechData = await websiteTech.detectTech(websiteForTech);
-            enrichmentData.website_tech = websiteTechData;
-          } catch (error) {
-            logger.warn('Website tech detection failed', { leadId: lead.id, error });
-          }
-        }
-
-        // Step 3: PDL Company Enrichment
-        try {
-          const pdlData = await pdl.enrichCompany({
-            lead_id: requestId,
-            business_name: lead.company,
-            website: websiteForTech,
-            phone: lead.phone || filledFromGMB.phone,
-            city: lead.city || filledFromGMB.city,
-            state: lead.state || filledFromGMB.state,
-          });
-          if (pdlData) {
-            enrichmentData.pdl = pdlData;
-          }
-        } catch (error) {
-          logger.warn('PDL enrichment failed', { leadId: lead.id, error });
-        }
-
-        // Step 4: Calculate Fit Score
-        const fitScoreResult = calculateFitScore(enrichmentData);
-
-        // Step 5: Map to Salesforce-aligned fields (GMB/Clay data is authoritative and overwrites existing)
-        const sfFields = mapToSalesforceFields(enrichmentData, websiteForTech);
-        const sfUpdateFields = formatForSalesforceUpdate(
-          sfFields,
-          lead.website || undefined,
-          lead.phone || undefined,
-          filledFromGMB,
-          fitScoreResult.fit_score,
-          enrichmentData.google_places?.gmb_types,
-          gmbAuditNote
-        );
-
-        // Step 6: Update Salesforce
-        const sfResult = await salesforce.updateLead(lead.id, enrichmentData, fitScoreResult, sfUpdateFields);
-
-        if (sfResult.success) {
-          results.push({
-            id: lead.id,
-            success: true,
-            fit_score: fitScoreResult.fit_score,
-          });
-        } else {
-          const errorMsg = sfResult.error
-            ? `${sfResult.error.code}: ${sfResult.error.message}`
-            : 'Failed to update Salesforce';
-          results.push({
-            id: lead.id,
-            success: false,
-            error: errorMsg,
-          });
-        }
-
-        // Store in local database
-        try {
-          await pool.query(
-            `INSERT INTO lead_enrichments (
-              salesforce_lead_id, job_id, enrichment_status,
-              google_places_data, pdl_data, website_tech_data,
-              fit_score, score_breakdown, salesforce_updated
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-            [
-              lead.id,
-              requestId,
-              'completed',
-              enrichmentData.google_places ? JSON.stringify(enrichmentData.google_places) : null,
-              enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
-              enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
-              fitScoreResult.fit_score,
-              JSON.stringify(fitScoreResult.score_breakdown),
-              sfResult.success,
-            ]
-          );
-        } catch (dbError) {
-          logger.error('Failed to store enrichment record', { leadId: lead.id, error: dbError });
-        }
-      } finally {
-        await websiteTech.close();
-      }
-    } catch (error) {
-      results.push({
-        id: lead.id,
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-    }
+    logger.info('Batch chunk completed', {
+      processed: Math.min(i + maxConcurrency, leadsToEnrich.length),
+      total: leadsToEnrich.length,
+    });
   }
 
+  const totalDuration = Date.now() - startTime;
   const successCount = results.filter(r => r.success).length;
+  const avgDuration = results.reduce((sum, r) => sum + (r.duration_ms || 0), 0) / results.length;
+
+  logger.info('Parallel batch enrichment completed', {
+    processed: results.length,
+    successful: successCount,
+    failed: results.length - successCount,
+    totalDuration_ms: totalDuration,
+    avgLeadDuration_ms: Math.round(avgDuration),
+    concurrency: maxConcurrency,
+  });
+
   res.json({
     processed: results.length,
     successful: successCount,
     failed: results.length - successCount,
+    total_duration_ms: totalDuration,
+    avg_lead_duration_ms: Math.round(avgDuration),
+    concurrency_used: maxConcurrency,
     results,
   });
 });
