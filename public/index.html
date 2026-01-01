@@ -685,8 +685,8 @@
         <h2>Unenriched Leads</h2>
         <div class="header-controls">
           <label style="display: flex; align-items: center; gap: 6px; margin-right: 12px;">
-            <input type="checkbox" id="insideSalesFilter" onchange="loadUnenrichedLeads(1)">
-            <span>Inside Sales Only</span>
+            <input type="checkbox" id="facebookOnlyFilter" onchange="loadUnenrichedLeads(1)">
+            <span>Facebook Only</span>
           </label>
           <select id="unenrichedDateRange" onchange="loadUnenrichedLeads(1)">
             <option value="today">Today</option>
@@ -1870,10 +1870,10 @@
       try {
         const dateRange = getUnenrichedDateRange();
         const offset = (page - 1) * unenrichedPagination.pageSize;
-        const insideSalesOnly = document.getElementById('insideSalesFilter').checked;
+        const facebookOnly = document.getElementById('facebookOnlyFilter').checked;
         let url = `/api/dashboard/unenriched?limit=${unenrichedPagination.pageSize}&offset=${offset}&startDate=${dateRange.startDate}&endDate=${dateRange.endDate}`;
-        if (insideSalesOnly) {
-          url += '&leadSource=Inside Sales';
+        if (facebookOnly) {
+          url += '&leadSource=Facebook';
         }
         const response = await fetchApi(url);
         const data = await response.json();
