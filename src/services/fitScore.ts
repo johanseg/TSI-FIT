@@ -13,12 +13,12 @@ import { PeopleDataLabsService } from './peopleDataLabs';
  * - Google Places: reviews, physical location, website
  * - Website Tech: pixel detection for bonus points
  *
- * Solvency Score (0-85):
+ * Solvency Score (0-95):
  * - Website: +10 if present
  * - Reviews: +0 (<5), +10 (5-14), +20 (15-29), +25 (≥30)
  * - Years in business: +0 (<2), +10 (2-3), +15 (4-7), +20 (≥8)
  * - Employees: +0 (<3), +10 (3-5), +15 (6-15), +20 (≥16)
- * - Physical location: +10 for 1 location
+ * - Physical location: +20 for 1 location
  *
  * Pixel Bonus (0-10):
  * - 1 pixel: +5
@@ -109,9 +109,9 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     breakdown.solvency_score.employees = 0;
   }
 
-  // Physical location: +10 if operational GMB with address
+  // Physical location: +20 if operational GMB with address
   if (googlePlaces?.gmb_is_operational === true && googlePlaces?.gmb_address) {
-    breakdown.solvency_score.physical_location = 10;
+    breakdown.solvency_score.physical_location = 20;
   }
 
   breakdown.solvency_score.total =
