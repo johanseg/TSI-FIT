@@ -97,6 +97,7 @@ export interface EnrichmentData {
   clay?: ClayData; // Legacy - kept for backwards compatibility
   pdl?: PDLCompanyData; // People Data Labs Company Enrichment
   website_tech?: WebsiteTechData;
+  marketing_spend?: number; // Monthly marketing spend from landing page form
 }
 
 export interface ScoreBreakdown {
@@ -106,6 +107,7 @@ export interface ScoreBreakdown {
     years_in_business: number;
     employees: number;
     physical_location: number;
+    marketing_spend: number;
     total: number;
   };
   pixel_bonus: {

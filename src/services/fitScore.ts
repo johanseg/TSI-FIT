@@ -19,6 +19,7 @@ import { PeopleDataLabsService } from './peopleDataLabs';
  * - Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
  * - Employees: +0 (<2), +5 (2-4), +15 (>5)
  * - Physical location: +20 for 1 location
+ * - Marketing spend: +0 ($0), +5 (<$500), +10 (≥$500)
  *
  * Pixel Bonus (0-10):
  * - 1 pixel: +5
@@ -34,6 +35,7 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
       years_in_business: 0,
       employees: 0,
       physical_location: 0,
+      marketing_spend: 0,
       total: 0,
     },
     pixel_bonus: {
@@ -112,12 +114,23 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     breakdown.solvency_score.physical_location = 20;
   }
 
+  // Marketing spend: +0 ($0), +5 (<$500), +10 (≥$500)
+  const marketingSpend = enrichmentData.marketing_spend ?? 0;
+  if (marketingSpend >= 500) {
+    breakdown.solvency_score.marketing_spend = 10;
+  } else if (marketingSpend > 0) {
+    breakdown.solvency_score.marketing_spend = 5;
+  } else {
+    breakdown.solvency_score.marketing_spend = 0;
+  }
+
   breakdown.solvency_score.total =
     breakdown.solvency_score.website +
     breakdown.solvency_score.reviews +
     breakdown.solvency_score.years_in_business +
     breakdown.solvency_score.employees +
-    breakdown.solvency_score.physical_location;
+    breakdown.solvency_score.physical_location +
+    breakdown.solvency_score.marketing_spend;
 
   // Calculate Pixel Bonus (0-10)
   // 1 pixel: +5, 2+ pixels: +10
