@@ -1201,7 +1201,8 @@ app.post('/api/dashboard/enrich-batch-gmb-only', async (req, res) => {
 
           if (googlePlacesData) {
             sfUpdateFields.Has_GMB__c = true;
-            // Note: GMB_Review_Count__c and GMB_Rating__c fields don't exist in Salesforce
+            sfUpdateFields.GMB_Review_Count__c = googlePlacesData.gmb_review_count || 0;
+            sfUpdateFields.GMB_Rating__c = googlePlacesData.gmb_rating || null;
             if (googlePlacesData.place_id) {
               sfUpdateFields.GMB_URL__c = `https://www.google.com/maps/place/?q=place_id:${googlePlacesData.place_id}`;
             }
