@@ -16,7 +16,7 @@ import { PeopleDataLabsService } from './peopleDataLabs';
  * Solvency Score (0-95):
  * - Website: +10 if present
  * - Reviews: +0 (<5), +10 (5-14), +20 (15-29), +25 (≥30)
- * - Years in business: +0 (<2), +10 (2-3), +15 (4-7), +20 (≥8)
+ * - Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
  * - Employees: +0 (<2), +10 (2-5), +20 (>5)
  * - Physical location: +20 for 1 location
  *
@@ -72,15 +72,15 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     breakdown.solvency_score.reviews = 0;
   }
 
-  // Years in business: +0 (<2), +10 (2-3), +15 (4-7), +20 (≥8)
+  // Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
   // Priority: PDL > Clay (legacy)
   const yearsInBusiness = pdl?.years_in_business ?? clay?.years_in_business ?? 0;
   if (yearsInBusiness >= 8) {
-    breakdown.solvency_score.years_in_business = 20;
-  } else if (yearsInBusiness >= 4) {
     breakdown.solvency_score.years_in_business = 15;
-  } else if (yearsInBusiness >= 2) {
+  } else if (yearsInBusiness >= 4) {
     breakdown.solvency_score.years_in_business = 10;
+  } else if (yearsInBusiness >= 2) {
+    breakdown.solvency_score.years_in_business = 5;
   } else {
     breakdown.solvency_score.years_in_business = 0;
   }
