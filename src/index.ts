@@ -1258,6 +1258,80 @@ app.post('/api/dashboard/enrich-batch-gmb-only', async (req, res) => {
   });
 });
 
+// Backfill fit scores for leads that have GMB but no fit score
+app.post('/api/dashboard/backfill-fit-scores', async (req, res) => {
+  const { limit = 100 } = req.body;
+  const startTime = Date.now();
+  const salesforce = getSalesforceService();
+
+  // Query leads with GMB but no fit score
+  const query = `SELECT Id, Company, Has_GMB__c, GMB_URL__c FROM Lead WHERE Has_GMB__c = true AND Fit_Score__c = null AND LeadSource = 'Facebook' LIMIT ${Math.min(limit, 500)}`;
+
+  let leadsToUpdate: Array<{ id: string; company: string; hasGmb: boolean }> = [];
+
+  try {
+    const sfResult = await salesforce.query(query);
+    leadsToUpdate = (sfResult.records as Array<Record<string, unknown>>).map((r) => ({
+      id: r.Id as string,
+      company: r.Company as string,
+      hasGmb: r.Has_GMB__c as boolean,
+    }));
+  } catch (err) {
+    logger.error('Failed to fetch leads for fit score backfill', { error: err });
+    return res.status(500).json({ error: 'Failed to fetch leads from Salesforce' });
+  }
+
+  if (leadsToUpdate.length === 0) {
+    return res.json({ message: 'No leads found needing fit score backfill', processed: 0 });
+  }
+
+  logger.info('Starting fit score backfill', { totalLeads: leadsToUpdate.length });
+
+  const results: Array<{ id: string; success: boolean; fit_score?: number; error?: string }> = [];
+
+  for (const lead of leadsToUpdate) {
+    try {
+      // Calculate fit score assuming GMB exists (gives +10 for website)
+      const enrichmentData: EnrichmentData = {
+        google_places: {
+          place_id: 'backfill', // Indicates GMB exists
+        },
+      };
+      const fitScoreResult = calculateFitScore(enrichmentData);
+
+      // Update Salesforce with fit score
+      const sfUpdateFields: Record<string, unknown> = {
+        Fit_Score__c: fitScoreResult.fit_score,
+      };
+
+      const sfResult = await salesforce.updateLead(lead.id, enrichmentData, fitScoreResult, sfUpdateFields);
+
+      if (sfResult.success) {
+        results.push({ id: lead.id, success: true, fit_score: fitScoreResult.fit_score });
+      } else {
+        results.push({ id: lead.id, success: false, error: sfResult.error?.message });
+      }
+    } catch (error) {
+      results.push({
+        id: lead.id,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
+  const totalDuration = Date.now() - startTime;
+  const successCount = results.filter(r => r.success).length;
+
+  res.json({
+    processed: results.length,
+    successful: successCount,
+    failed: results.length - successCount,
+    total_duration_ms: totalDuration,
+    results,
+  });
+});
+
 // Synchronous enrichment endpoint for Workato
 app.post('/enrich', authenticateApiKey, async (req, res) => {
   const requestId = uuidv4();
