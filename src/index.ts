@@ -1107,6 +1107,151 @@ app.post('/api/dashboard/enrich-batch', async (req, res) => {
   });
 });
 
+// Google Places-only batch enrichment (faster - skips PDL and website tech)
+app.post('/api/dashboard/enrich-batch-gmb-only', async (req, res) => {
+  const { lead_ids, concurrency = 10 } = req.body;
+  const startTime = Date.now();
+
+  if (!Array.isArray(lead_ids) || lead_ids.length === 0) {
+    return res.status(400).json({ error: 'lead_ids array is required' });
+  }
+
+  if (lead_ids.length > 100) {
+    return res.status(400).json({ error: 'Maximum 100 leads per batch for GMB-only enrichment' });
+  }
+
+  const maxConcurrency = Math.min(Math.max(1, concurrency), 20);
+  const salesforce = getSalesforceService();
+
+  // Fetch lead details directly from Salesforce by IDs
+  const leadIds = lead_ids.map((id: string) => `'${id}'`).join(',');
+  const query = `SELECT Id, Company, Phone, City, State, Website, Street, PostalCode FROM Lead WHERE Id IN (${leadIds})`;
+
+  let leadsToEnrich: Array<{
+    id: string;
+    company: string;
+    phone?: string | null;
+    city?: string | null;
+    state?: string | null;
+    website?: string | null;
+    street?: string | null;
+    postalCode?: string | null;
+  }> = [];
+
+  try {
+    const sfResult = await salesforce.query(query);
+    leadsToEnrich = (sfResult.records as Array<Record<string, unknown>>).map((r) => ({
+      id: r.Id as string,
+      company: r.Company as string,
+      phone: r.Phone as string | null,
+      city: r.City as string | null,
+      state: r.State as string | null,
+      website: r.Website as string | null,
+      street: r.Street as string | null,
+      postalCode: r.PostalCode as string | null,
+    }));
+  } catch (err) {
+    logger.error('Failed to fetch leads from Salesforce', { error: err });
+    return res.status(500).json({ error: 'Failed to fetch leads from Salesforce' });
+  }
+
+  if (leadsToEnrich.length === 0) {
+    return res.status(404).json({ error: 'No matching leads found in Salesforce' });
+  }
+
+  logger.info('Starting GMB-only batch enrichment', {
+    totalLeads: leadsToEnrich.length,
+    concurrency: maxConcurrency,
+  });
+
+  const googlePlaces = new GooglePlacesService(process.env.GOOGLE_PLACES_API_KEY || '');
+
+  const results: Array<{ id: string; success: boolean; fit_score?: number; gmb_found?: boolean; reviews?: number; error?: string }> = [];
+
+  // Process in parallel chunks
+  for (let i = 0; i < leadsToEnrich.length; i += maxConcurrency) {
+    const chunk = leadsToEnrich.slice(i, i + maxConcurrency);
+    const chunkResults = await Promise.all(
+      chunk.map(async (lead) => {
+        try {
+          const enrichmentData: EnrichmentData = {};
+
+          // Only run Google Places enrichment
+          const googlePlacesData = await googlePlaces.enrich(
+            lead.company,
+            lead.phone || undefined,
+            lead.city || undefined,
+            lead.state || undefined,
+            lead.website || undefined,
+            lead.street || undefined,
+            lead.postalCode || undefined
+          );
+
+          if (googlePlacesData) {
+            enrichmentData.google_places = googlePlacesData;
+          }
+
+          // Calculate fit score with just GMB data
+          const fitScoreResult = calculateFitScore(enrichmentData);
+
+          // Update Salesforce with GMB data and fit score
+          const sfUpdateFields: Record<string, unknown> = {
+            Fit_Score__c: fitScoreResult.fit_score,
+          };
+
+          if (googlePlacesData) {
+            sfUpdateFields.Has_GMB__c = true;
+            sfUpdateFields.GMB_Review_Count__c = googlePlacesData.gmb_review_count || 0;
+            sfUpdateFields.GMB_Rating__c = googlePlacesData.gmb_rating || null;
+            if (googlePlacesData.place_id) {
+              sfUpdateFields.GMB_URL__c = `https://www.google.com/maps/place/?q=place_id:${googlePlacesData.place_id}`;
+            }
+          } else {
+            sfUpdateFields.Has_GMB__c = false;
+          }
+
+          await salesforce.updateLead(lead.id, enrichmentData, fitScoreResult, sfUpdateFields);
+
+          return {
+            id: lead.id,
+            success: true,
+            fit_score: fitScoreResult.fit_score,
+            gmb_found: !!googlePlacesData?.place_id,
+            reviews: googlePlacesData?.gmb_review_count || 0,
+          };
+        } catch (error) {
+          return {
+            id: lead.id,
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          };
+        }
+      })
+    );
+    results.push(...chunkResults);
+
+    logger.info('GMB-only batch chunk completed', {
+      processed: Math.min(i + maxConcurrency, leadsToEnrich.length),
+      total: leadsToEnrich.length,
+    });
+  }
+
+  const totalDuration = Date.now() - startTime;
+  const successCount = results.filter(r => r.success).length;
+  const gmbFoundCount = results.filter(r => r.gmb_found).length;
+
+  res.json({
+    processed: results.length,
+    successful: successCount,
+    failed: results.length - successCount,
+    gmb_found: gmbFoundCount,
+    gmb_match_rate: `${((gmbFoundCount / results.length) * 100).toFixed(1)}%`,
+    total_duration_ms: totalDuration,
+    avg_lead_duration_ms: Math.round(totalDuration / results.length),
+    results,
+  });
+});
+
 // Synchronous enrichment endpoint for Workato
 app.post('/enrich', authenticateApiKey, async (req, res) => {
   const requestId = uuidv4();
