@@ -17,7 +17,7 @@ import { PeopleDataLabsService } from './peopleDataLabs';
  * - Website: +10 if present
  * - Reviews: +0 (<5), +10 (5-14), +20 (15-29), +25 (≥30)
  * - Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
- * - Employees: +0 (<2), +10 (2-5), +20 (>5)
+ * - Employees: +0 (<2), +5 (2-4), +15 (>5)
  * - Physical location: +20 for 1 location
  *
  * Pixel Bonus (0-10):
@@ -85,7 +85,7 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     breakdown.solvency_score.years_in_business = 0;
   }
 
-  // Employees: +0 (<2), +10 (2-5), +20 (>5)
+  // Employees: +0 (<2), +5 (2-4), +15 (>5)
   // Priority: PDL employee_count > PDL size_range (parsed) > Clay (legacy)
   let employees = 0;
   if (pdl?.employee_count != null && pdl.employee_count > 0) {
@@ -100,9 +100,9 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
   }
 
   if (employees > 5) {
-    breakdown.solvency_score.employees = 20;
+    breakdown.solvency_score.employees = 15;
   } else if (employees >= 2) {
-    breakdown.solvency_score.employees = 10;
+    breakdown.solvency_score.employees = 5;
   } else {
     breakdown.solvency_score.employees = 0;
   }
