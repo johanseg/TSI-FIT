@@ -139,10 +139,13 @@ function mapYearsInBusiness(yearsInBusiness?: number): YearsInBusinessPicklist |
 }
 
 /**
- * Determine location type from Google Places data
- * - If commercial/storefront location -> "Physical Location (Office)" or "Retail Location (Store Front)"
- * - If residential detected -> null (not a valid business location)
- * - If home-based service business -> "Home Office"
+ * Determine location type from Google Places data using enhanced classification
+ *
+ * Location types:
+ * - "Retail Location (Store Front)": Customer-facing storefront (retail, restaurant, salon, etc.)
+ * - "Physical Location (Office)": Commercial office/shop location (contractors with offices, professional services)
+ * - "Home Office": Service-area business operating from home (home-based contractors, mobile services)
+ * - null: Residential or unknown (should not receive physical location bonus)
  */
 function mapLocationType(
   googlePlaces?: GooglePlacesData
@@ -151,45 +154,35 @@ function mapLocationType(
     return null;
   }
 
-  // Use the new commercial location detection
-  const isCommercial = GooglePlacesService.isCommercialLocation(googlePlaces);
+  // Use the enhanced location classification system
+  const classification = GooglePlacesService.getLocationClassification(googlePlaces);
 
-  // If residential, don't assign a location type (user requirement: must not be residential)
-  if (isCommercial === false) {
-    return null;
-  }
-
-  // If we have Google Places data with an address and operational status
-  if (googlePlaces.gmb_address && googlePlaces.gmb_is_operational && isCommercial) {
-    // Check types for retail indicators
-    const types = googlePlaces.gmb_types || [];
-    const retailTypes = [
-      'store', 'shop', 'retail', 'boutique', 'salon', 'spa',
-      'restaurant', 'cafe', 'bar', 'bakery', 'dealership',
-      'clothing_store', 'shoe_store', 'jewelry_store',
-      'electronics_store', 'hardware_store', 'home_goods_store',
-      'furniture_store', 'book_store', 'florist',
-      'grocery_or_supermarket', 'convenience_store', 'supermarket',
-      'beauty_salon', 'hair_care', 'gym', 'pharmacy',
-    ];
-
-    const isRetail = types.some(t =>
-      retailTypes.some(rt => t.toLowerCase().includes(rt))
-    );
-
-    if (isRetail) {
+  switch (classification) {
+    case 'storefront':
+      // Clear retail/customer-facing location
       return 'Retail Location (Store Front)';
-    } else {
+
+    case 'office':
+      // Commercial office or contractor shop
       return 'Physical Location (Office)';
-    }
-  }
 
-  // If we found a GMB but no clear physical location (service-based business)
-  if (googlePlaces.place_id && !googlePlaces.gmb_address) {
-    return 'Home Office';
-  }
+    case 'service_area':
+      // Home-based or mobile business (e.g., home-based contractors)
+      // These are legitimate businesses but don't have a commercial location
+      return 'Home Office';
 
-  return null;
+    case 'residential':
+      // Residential location - not a valid business location type
+      return null;
+
+    default:
+      // If we have a GMB but can't classify, try basic inference
+      if (googlePlaces.place_id && !googlePlaces.gmb_address) {
+        // Has GMB but no physical address - likely service area business
+        return 'Home Office';
+      }
+      return null;
+  }
 }
 
 // Lead_Vertical__c picklist values from Salesforce

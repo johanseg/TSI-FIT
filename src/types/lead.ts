@@ -31,6 +31,8 @@ export interface GooglePlacesData {
   gmb_state?: string;
   gmb_zip?: string;
   gmb_types?: string[]; // For determining commercial vs residential
+  // Service area business detection (home-based contractors)
+  is_service_area_business?: boolean; // True if business serves customers at their location (no storefront)
   // Flag to indicate GMB address should overwrite lead address (high-confidence phone + name match)
   shouldOverwriteAddress?: boolean;
 }

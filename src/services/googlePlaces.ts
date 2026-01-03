@@ -390,6 +390,7 @@ export class GooglePlacesService {
           'websiteUri',
           'nationalPhoneNumber',
           'addressComponents',
+          'pureServiceAreaBusiness', // Detects service-area businesses (home-based contractors)
         ].join(',');
 
         const response = await this.client.get(`/places/${placeId}`, {
@@ -450,6 +451,7 @@ export class GooglePlacesService {
           gmb_state: state,
           gmb_zip: zip,
           gmb_types: result.types || undefined,
+          is_service_area_business: result.pureServiceAreaBusiness === true,
         };
       },
       { maxRetries: 3, initialDelayMs: 1000 },
@@ -693,64 +695,160 @@ export class GooglePlacesService {
   }
 
   /**
-   * Determine if location is commercial/storefront vs residential
-   * Returns true for commercial, false for residential, null if unknown
+   * Determine the business location type for more accurate scoring
+   *
+   * Returns:
+   * - 'storefront': Commercial location with physical customer-facing space (retail, restaurant, salon, etc.)
+   * - 'office': Commercial location for service businesses (contractors with office, professional services)
+   * - 'service_area': Home-based or mobile business that serves customers at their location
+   * - 'residential': Residential/lodging location (should not receive physical location bonus)
+   * - null: Unknown/cannot determine
    */
-  static isCommercialLocation(googlePlacesData: GooglePlacesData): boolean | null {
-    if (!googlePlacesData.gmb_types || googlePlacesData.gmb_types.length === 0) {
+  static getLocationClassification(googlePlacesData: GooglePlacesData): 'storefront' | 'office' | 'service_area' | 'residential' | null {
+    // First check the pureServiceAreaBusiness flag from Google Places API
+    // This is the most reliable indicator of a home-based/mobile contractor
+    if (googlePlacesData.is_service_area_business === true) {
+      return 'service_area';
+    }
+
+    const types = googlePlacesData.gmb_types?.map(t => t.toLowerCase()) || [];
+
+    if (types.length === 0) {
+      // No types available - try to infer from other data
+      if (googlePlacesData.gmb_address && googlePlacesData.gmb_is_operational) {
+        // Has a physical address and is operational, likely a real business location
+        return 'office';
+      }
       return null;
     }
 
-    // Residential indicators
+    // Residential indicators - these should NOT get physical location bonus
     const residentialTypes = [
-      'lodging',
-      'campground',
-      'rv_park',
+      'lodging', 'campground', 'rv_park', 'hotel', 'motel', 'resort',
+      'apartment', 'apartment_complex', 'housing_complex',
     ];
 
-    // Commercial/Storefront indicators
-    const commercialTypes = [
+    // Storefront/retail indicators - clear commercial presence with customer foot traffic
+    const storefrontTypes = [
       'store', 'shop', 'retail', 'restaurant', 'cafe', 'bakery', 'bar',
-      'beauty_salon', 'hair_care', 'spa', 'gym', 'health',
-      'car_dealer', 'car_repair', 'car_wash',
-      'bank', 'atm', 'finance', 'insurance_agency',
-      'doctor', 'dentist', 'hospital', 'pharmacy', 'veterinary_care',
-      'lawyer', 'accounting', 'real_estate_agency',
-      'establishment', 'point_of_interest', 'business',
-      'food', 'meal_delivery', 'meal_takeaway',
-      'clothing_store', 'shoe_store', 'jewelry_store',
-      'electronics_store', 'hardware_store', 'home_goods_store',
-      'furniture_store', 'book_store', 'florist',
-      'grocery_or_supermarket', 'convenience_store', 'supermarket',
-      'gas_station', 'parking', 'car_rental',
-      'travel_agency', 'post_office', 'laundry', 'locksmith',
-      'moving_company', 'storage', 'plumber', 'electrician',
-      'roofing_contractor', 'general_contractor', 'painter',
+      'beauty_salon', 'hair_care', 'spa', 'gym', 'fitness_center',
+      'car_dealer', 'car_wash', 'gas_station',
+      'pharmacy', 'florist', 'grocery', 'supermarket', 'convenience_store',
+      'clothing_store', 'shoe_store', 'jewelry_store', 'electronics_store',
+      'hardware_store', 'home_goods_store', 'furniture_store', 'book_store',
+      'pet_store', 'liquor_store', 'department_store', 'shopping_mall',
     ];
 
-    const types = googlePlacesData.gmb_types.map(t => t.toLowerCase());
+    // Office/professional service types - commercial but not retail
+    const officeTypes = [
+      'doctor', 'dentist', 'hospital', 'medical', 'veterinary_care', 'clinic',
+      'lawyer', 'attorney', 'law_firm', 'accounting', 'accountant',
+      'real_estate_agency', 'insurance_agency', 'bank', 'finance',
+      'car_repair', 'auto_repair', 'mechanic',
+      'storage', 'moving_company', 'funeral_home',
+    ];
 
-    // Check for residential types first
+    // Contractor types - these are OFTEN home-based but not always
+    // If they have is_service_area_business=false AND a real address, they likely have a shop/office
+    const contractorTypes = [
+      'plumber', 'electrician', 'roofing_contractor', 'general_contractor',
+      'painter', 'hvac', 'landscaper', 'landscaping', 'lawn_care',
+      'pest_control', 'cleaning', 'maid_service', 'carpet_cleaning',
+      'handyman', 'locksmith', 'appliance_repair', 'garage_door',
+      'tree_service', 'pool_service', 'fencing', 'concrete', 'masonry',
+      'home_improvement', 'remodeling', 'renovation', 'construction',
+    ];
+
+    // Check for residential first
     for (const type of types) {
       if (residentialTypes.some(rt => type.includes(rt))) {
-        return false;
+        return 'residential';
       }
     }
 
-    // Check for commercial types
+    // Check for clear storefront/retail
     for (const type of types) {
-      if (commercialTypes.some(ct => type.includes(ct))) {
-        return true;
+      if (storefrontTypes.some(st => type.includes(st))) {
+        return 'storefront';
       }
     }
 
-    // Default to commercial if we have a GMB profile and it's operational
-    // Most businesses with GMB listings are commercial
+    // Check for office/professional services
+    for (const type of types) {
+      if (officeTypes.some(ot => type.includes(ot))) {
+        return 'office';
+      }
+    }
+
+    // Check for contractor types
+    const isContractorType = types.some(type =>
+      contractorTypes.some(ct => type.includes(ct))
+    );
+
+    if (isContractorType) {
+      // Key insight: If Google didn't flag as pureServiceAreaBusiness
+      // AND the business has a physical address, they likely have a real shop/office
+      if (googlePlacesData.gmb_address && googlePlacesData.gmb_is_operational) {
+        // Contractor with physical address - likely has a shop or office
+        return 'office';
+      } else {
+        // Contractor without clear physical address - likely home-based
+        return 'service_area';
+      }
+    }
+
+    // Default: if operational with address, assume office
     if (googlePlacesData.gmb_is_operational && googlePlacesData.gmb_address) {
-      return true;
+      return 'office';
     }
 
     return null;
+  }
+
+  /**
+   * @deprecated Use getLocationClassification() for more granular detection
+   * Determine if location is commercial/storefront vs residential
+   * Returns true for commercial, false for residential, null if unknown
+   *
+   * Note: This method treats service-area businesses (home-based contractors) as commercial,
+   * which may not be ideal for all use cases. Use getLocationClassification() instead.
+   */
+  static isCommercialLocation(googlePlacesData: GooglePlacesData): boolean | null {
+    const classification = this.getLocationClassification(googlePlacesData);
+
+    switch (classification) {
+      case 'storefront':
+      case 'office':
+        return true;
+      case 'service_area':
+        // Service-area businesses are commercial entities, but operate from home
+        // For backwards compatibility, we still return true
+        // Use getLocationClassification() if you need to distinguish these
+        return true;
+      case 'residential':
+        return false;
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Check if the business has a real commercial physical location
+   * (storefront or office - NOT home-based service area businesses)
+   *
+   * This is what should be used for the +20 physical location bonus
+   */
+  static hasCommercialLocation(googlePlacesData: GooglePlacesData): boolean {
+    const classification = this.getLocationClassification(googlePlacesData);
+    return classification === 'storefront' || classification === 'office';
+  }
+
+  /**
+   * Check if the business is a service-area business (home-based/mobile)
+   * These are legitimate businesses but operate from home, not a commercial location
+   */
+  static isServiceAreaBusiness(googlePlacesData: GooglePlacesData): boolean {
+    return this.getLocationClassification(googlePlacesData) === 'service_area';
   }
 }
 

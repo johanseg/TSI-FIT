@@ -4,6 +4,7 @@ import {
   ScoreBreakdown,
 } from '../types/lead';
 import { PeopleDataLabsService } from './peopleDataLabs';
+import { GooglePlacesService } from './googlePlaces';
 
 /**
  * Calculate Fit Score based on enrichment data
@@ -18,8 +19,14 @@ import { PeopleDataLabsService } from './peopleDataLabs';
  * - Reviews: +0 (<5), +10 (5-14), +20 (15-29), +25 (≥30)
  * - Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
  * - Employees: +0 (<2), +5 (2-4), +15 (>5)
- * - Physical location: +20 for 1 location
+ * - Physical location: +20 storefront/office, +10 service-area business
  * - Marketing spend: +0 ($0), +5 (<$500), +10 (≥$500)
+ *
+ * Physical Location Detection:
+ * - Uses Google Places API pureServiceAreaBusiness flag to detect home-based contractors
+ * - Storefront/Office locations get +20 bonus (real commercial location)
+ * - Service-area businesses (home-based) get +10 bonus (verified GMB presence)
+ * - Residential/unknown get +0
  *
  * Pixel Bonus (0-10):
  * - 1 pixel: +5
@@ -109,9 +116,18 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     breakdown.solvency_score.employees = 0;
   }
 
-  // Physical location: +20 if operational GMB with address
-  if (googlePlaces?.gmb_is_operational === true && googlePlaces?.gmb_address) {
-    breakdown.solvency_score.physical_location = 20;
+  // Physical location bonus based on location classification:
+  // - Storefront/Office: +20 (has real commercial location with customer foot traffic or dedicated office)
+  // - Service Area Business: +10 (verified business via GMB, operates from home/mobile)
+  // - Residential/Unknown: +0 (not a valid business location)
+  if (googlePlaces) {
+    const classification = GooglePlacesService.getLocationClassification(googlePlaces);
+    if (classification === 'storefront' || classification === 'office') {
+      breakdown.solvency_score.physical_location = 20;
+    } else if (classification === 'service_area') {
+      // Verified service-area business (home-based contractor with GMB presence)
+      breakdown.solvency_score.physical_location = 10;
+    }
   }
 
   // Marketing spend: +0 ($0), +5 (<$500), +10 (≥$500)
