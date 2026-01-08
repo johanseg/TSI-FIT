@@ -334,6 +334,27 @@ export class GooglePlacesService {
       }
     }
 
+    // Strategy 2b: Try business name with street address only (no city)
+    // Some businesses are well-known on their street and city adds noise
+    if (address) {
+      await this.rateLimit();
+      const placeId = await this.searchForPlace(`${businessName} ${address}`);
+      if (placeId) {
+        logger.info('Found place by business name + street only', { businessName, address });
+        return placeId;
+      }
+    }
+
+    // Strategy 2c: Try business name with zip + street (zip is more specific than city)
+    if (address && zip) {
+      await this.rateLimit();
+      const placeId = await this.searchForPlace(`${businessName} ${address} ${zip}`);
+      if (placeId) {
+        logger.info('Found place by business name + street + zip', { businessName, address, zip });
+        return placeId;
+      }
+    }
+
     // Strategy 3: Try business name with city, state, zip
     if (city && state) {
       await this.rateLimit();
