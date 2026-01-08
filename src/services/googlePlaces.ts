@@ -160,6 +160,72 @@ function extractBusinessNameFromDomain(url: string): string | null {
   }
 }
 
+/**
+ * Get approximate coordinates for city/state for location biasing
+ * Returns null if location not recognized
+ * Uses static mapping for major US cities to avoid external geocoding API
+ */
+function getCityCoordinates(city: string, state: string): { latitude: number; longitude: number } | null {
+  // Map major US cities to coordinates (top 100 cities cover most queries)
+  // Format: "city, ST" -> { lat, lng }
+  const cityCoords: Record<string, { latitude: number; longitude: number }> = {
+    // Top 50 US cities by population
+    'new york, ny': { latitude: 40.7128, longitude: -74.0060 },
+    'los angeles, ca': { latitude: 34.0522, longitude: -118.2437 },
+    'chicago, il': { latitude: 41.8781, longitude: -87.6298 },
+    'houston, tx': { latitude: 29.7604, longitude: -95.3698 },
+    'phoenix, az': { latitude: 33.4484, longitude: -112.0740 },
+    'philadelphia, pa': { latitude: 39.9526, longitude: -75.1652 },
+    'san antonio, tx': { latitude: 29.4241, longitude: -98.4936 },
+    'san diego, ca': { latitude: 32.7157, longitude: -117.1611 },
+    'dallas, tx': { latitude: 32.7767, longitude: -96.7970 },
+    'san jose, ca': { latitude: 37.3382, longitude: -121.8863 },
+    'austin, tx': { latitude: 30.2672, longitude: -97.7431 },
+    'jacksonville, fl': { latitude: 30.3322, longitude: -81.6557 },
+    'fort worth, tx': { latitude: 32.7555, longitude: -97.3308 },
+    'columbus, oh': { latitude: 39.9612, longitude: -82.9988 },
+    'charlotte, nc': { latitude: 35.2271, longitude: -80.8431 },
+    'san francisco, ca': { latitude: 37.7749, longitude: -122.4194 },
+    'indianapolis, in': { latitude: 39.7684, longitude: -86.1581 },
+    'seattle, wa': { latitude: 47.6062, longitude: -122.3321 },
+    'denver, co': { latitude: 39.7392, longitude: -104.9903 },
+    'washington, dc': { latitude: 38.9072, longitude: -77.0369 },
+    'boston, ma': { latitude: 42.3601, longitude: -71.0589 },
+    'el paso, tx': { latitude: 31.7619, longitude: -106.4850 },
+    'nashville, tn': { latitude: 36.1627, longitude: -86.7816 },
+    'detroit, mi': { latitude: 42.3314, longitude: -83.0458 },
+    'oklahoma city, ok': { latitude: 35.4676, longitude: -97.5164 },
+    'portland, or': { latitude: 45.5152, longitude: -122.6784 },
+    'las vegas, nv': { latitude: 36.1699, longitude: -115.1398 },
+    'memphis, tn': { latitude: 35.1495, longitude: -90.0490 },
+    'louisville, ky': { latitude: 38.2527, longitude: -85.7585 },
+    'baltimore, md': { latitude: 39.2904, longitude: -76.6122 },
+    'milwaukee, wi': { latitude: 43.0389, longitude: -87.9065 },
+    'albuquerque, nm': { latitude: 35.0844, longitude: -106.6504 },
+    'tucson, az': { latitude: 32.2226, longitude: -110.9747 },
+    'fresno, ca': { latitude: 36.7378, longitude: -119.7871 },
+    'mesa, az': { latitude: 33.4152, longitude: -111.8315 },
+    'sacramento, ca': { latitude: 38.5816, longitude: -121.4944 },
+    'atlanta, ga': { latitude: 33.7490, longitude: -84.3880 },
+    'kansas city, mo': { latitude: 39.0997, longitude: -94.5786 },
+    'colorado springs, co': { latitude: 38.8339, longitude: -104.8214 },
+    'omaha, ne': { latitude: 41.2565, longitude: -95.9345 },
+    'raleigh, nc': { latitude: 35.7796, longitude: -78.6382 },
+    'miami, fl': { latitude: 25.7617, longitude: -80.1918 },
+    'long beach, ca': { latitude: 33.7701, longitude: -118.1937 },
+    'virginia beach, va': { latitude: 36.8529, longitude: -75.9780 },
+    'oakland, ca': { latitude: 37.8044, longitude: -122.2712 },
+    'minneapolis, mn': { latitude: 44.9778, longitude: -93.2650 },
+    'tulsa, ok': { latitude: 36.1540, longitude: -95.9928 },
+    'tampa, fl': { latitude: 27.9506, longitude: -82.4572 },
+    'arlington, tx': { latitude: 32.7357, longitude: -97.1081 },
+    'new orleans, la': { latitude: 29.9511, longitude: -90.0715 },
+  };
+
+  const key = `${city.toLowerCase()}, ${state.toLowerCase()}`;
+  return cityCoords[key] || null;
+}
+
 export class GooglePlacesService {
   private client: AxiosInstance;
   private lastRequestTime: number = 0;
@@ -202,6 +268,12 @@ export class GooglePlacesService {
   ): Promise<string | null> {
     await this.rateLimit();
 
+    // Get city coordinates for location biasing (if available)
+    let coords: { latitude: number; longitude: number } | null = null;
+    if (city && state) {
+      coords = getCityCoordinates(city, state);
+    }
+
     // Strategy 1: Try phone number first (most accurate identifier)
     // Phone numbers are unique and give the best match
     if (phone) {
@@ -215,7 +287,11 @@ export class GooglePlacesService {
     // Strategy 2: Try business name with full address (most specific location)
     if (address && city && state) {
       await this.rateLimit();
-      const placeId = await this.searchForPlace(`${businessName} ${address} ${city}, ${state}`);
+      const placeId = await this.searchForPlace(
+        `${businessName} ${address} ${city}, ${state}`,
+        coords?.latitude,
+        coords?.longitude
+      );
       if (placeId) {
         logger.info('Found place by business name + full address', { businessName, city, state });
         return placeId;
@@ -226,7 +302,7 @@ export class GooglePlacesService {
     if (city && state) {
       await this.rateLimit();
       const query = zip ? `${businessName} ${city}, ${state} ${zip}` : `${businessName} ${city}, ${state}`;
-      const placeId = await this.searchForPlace(query);
+      const placeId = await this.searchForPlace(query, coords?.latitude, coords?.longitude);
       if (placeId) {
         logger.info('Found place by business name + city/state', { businessName, city, state });
         return placeId;
@@ -236,7 +312,11 @@ export class GooglePlacesService {
     // Strategy 4: Try business name with state only
     if (state) {
       await this.rateLimit();
-      const placeId = await this.searchForPlace(`${businessName} ${state}`);
+      const placeId = await this.searchForPlace(
+        `${businessName} ${state}`,
+        coords?.latitude,
+        coords?.longitude
+      );
       if (placeId) {
         logger.info('Found place by business name + state', { businessName, state });
         return placeId;
@@ -287,7 +367,11 @@ export class GooglePlacesService {
       // Try abbreviated name with city/state
       if (city && state) {
         await this.rateLimit();
-        const placeId = await this.searchForPlace(`${abbreviatedName} ${city}, ${state}`);
+        const placeId = await this.searchForPlace(
+          `${abbreviatedName} ${city}, ${state}`,
+          coords?.latitude,
+          coords?.longitude
+        );
         if (placeId) {
           logger.info('Found place by abbreviated name + city/state', { abbreviatedName, city, state });
           return placeId;
@@ -343,16 +427,28 @@ export class GooglePlacesService {
     return null;
   }
 
-  private async searchForPlace(query: string): Promise<string | null> {
+  private async searchForPlace(query: string, latitude?: number, longitude?: number): Promise<string | null> {
     return retryWithBackoff(
       async () => {
         // Using Places API (New) Text Search endpoint
+        const requestBody: any = {
+          textQuery: query,
+          pageSize: 1, // We only need the top result
+        };
+
+        // Add location bias if coordinates provided (50km radius)
+        if (latitude !== undefined && longitude !== undefined) {
+          requestBody.locationBias = {
+            circle: {
+              center: { latitude, longitude },
+              radius: 50000, // 50km radius - wide enough to catch suburbs but focused
+            },
+          };
+        }
+
         const response = await this.client.post(
           '/places:searchText',
-          {
-            textQuery: query,
-            pageSize: 1, // We only need the top result
-          },
+          requestBody,
           {
             headers: {
               'X-Goog-FieldMask': 'places.id',

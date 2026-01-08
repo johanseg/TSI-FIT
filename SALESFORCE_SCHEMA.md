@@ -290,6 +290,7 @@ Opportunities/Leads are classified into these channels based on UTM Source and L
 ### Exclusions
 
 - **Sales**: Exclude opportunities where LeadSource contains "referral radio rep"
+- **Inside Sales**: Exclude opportunities where LeadSource is "Unknown"
 - **MQLs**: Filter to specific 8 channels only (FB, Google, Bing, TikTok, Bark, Website, Radio, Com Exp)
 
 ---
