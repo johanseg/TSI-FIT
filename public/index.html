@@ -667,7 +667,7 @@
       <div class="header">
         <h2>Auto-Enrichment</h2>
         <div class="header-controls">
-          <select id="kpiDateRange" onchange="loadKPIs()">
+          <select id="kpiDateRange" onchange="loadKPIs(1)">
             <option value="today" selected>Today</option>
             <option value="yesterday">Yesterday</option>
             <option value="this_week">This Week</option>
@@ -773,6 +773,14 @@
 
     // Pagination state for unenriched leads
     let unenrichedPagination = {
+      currentPage: 1,
+      pageSize: 100,
+      totalCount: 0,
+      totalPages: 0
+    };
+
+    // Pagination state for KPIs enrichments
+    let kpiEnrichmentsPagination = {
       currentPage: 1,
       pageSize: 100,
       totalCount: 0,
@@ -1205,20 +1213,27 @@
     // Auto-Enrichment KPIs
     let kpiHourlyChart, kpiDailyChart;
 
-    async function loadKPIs() {
+    async function loadKPIs(page = 1) {
       const content = document.getElementById('kpis-content');
       content.innerHTML = '<div class="loading">Loading auto-enrichment data</div>';
 
       const period = document.getElementById('kpiDateRange').value;
+      const offset = (page - 1) * kpiEnrichmentsPagination.pageSize;
 
       try {
-        const response = await fetchApi(`/api/dashboard/enrichment-kpis?period=${period}`);
+        const response = await fetchApi(`/api/dashboard/enrichment-kpis?period=${period}&limit=${kpiEnrichmentsPagination.pageSize}&offset=${offset}`);
         if (!response.ok) {
           const errorData = await parseResponse(response);
           throw new Error(errorData.error || `HTTP ${response.status}`);
         }
 
         const data = await parseResponse(response);
+
+        // Update pagination state
+        kpiEnrichmentsPagination.currentPage = page;
+        kpiEnrichmentsPagination.totalCount = data.total_enrichments || data.recent_enrichments.length;
+        kpiEnrichmentsPagination.totalPages = Math.ceil(kpiEnrichmentsPagination.totalCount / kpiEnrichmentsPagination.pageSize);
+
         renderKPIs(data);
       } catch (error) {
         console.error('KPIs load error:', error);
