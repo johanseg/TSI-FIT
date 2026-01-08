@@ -274,13 +274,49 @@ export class GooglePlacesService {
       coords = getCityCoordinates(city, state);
     }
 
-    // Strategy 1: Try phone number first (most accurate identifier)
+    // Strategy 1: Try phone number in multiple formats (most accurate identifier)
     // Phone numbers are unique and give the best match
     if (phone) {
+      const phoneDigits = phone.replace(/\D/g, ''); // Extract just digits
+
+      // Variation 1a: Phone as provided (current behavior)
       const placeId = await this.searchForPlace(phone);
       if (placeId) {
-        logger.info('Found place by phone number', { phone, placeId });
+        logger.info('Found place by phone (original format)', { phone, placeId });
         return placeId;
+      }
+
+      // Variation 1b: Try with +1 country code if not present
+      if (phoneDigits.length === 10) {
+        await this.rateLimit();
+        const phoneWithCountry = `+1${phoneDigits}`;
+        const placeIdWithCountry = await this.searchForPlace(phoneWithCountry);
+        if (placeIdWithCountry) {
+          logger.info('Found place by phone (+1 format)', { phone: phoneWithCountry, placeId: placeIdWithCountry });
+          return placeIdWithCountry;
+        }
+      }
+
+      // Variation 1c: Try formatted (###) ###-####
+      if (phoneDigits.length === 10) {
+        await this.rateLimit();
+        const formatted = `(${phoneDigits.slice(0, 3)}) ${phoneDigits.slice(3, 6)}-${phoneDigits.slice(6)}`;
+        const placeIdFormatted = await this.searchForPlace(formatted);
+        if (placeIdFormatted) {
+          logger.info('Found place by phone (formatted)', { phone: formatted, placeId: placeIdFormatted });
+          return placeIdFormatted;
+        }
+      }
+
+      // Variation 1d: Try unformatted 10 digits
+      if (phoneDigits.length >= 10) {
+        await this.rateLimit();
+        const unformatted = phoneDigits.slice(-10); // Last 10 digits (removes country code if present)
+        const placeIdUnformatted = await this.searchForPlace(unformatted);
+        if (placeIdUnformatted) {
+          logger.info('Found place by phone (digits only)', { phone: unformatted, placeId: placeIdUnformatted });
+          return placeIdUnformatted;
+        }
       }
     }
 
