@@ -1614,6 +1614,40 @@
     }
 
     // Manual Enrichment
+    function renderFieldWithChange(label, currentValue, newValue, type) {
+      // Normalize null/undefined to '-' for display
+      const current = currentValue ?? '-';
+      const newVal = newValue ?? '-';
+
+      // Determine if there's a change
+      const hasChange = current !== newVal && newVal !== '-';
+
+      // Format value based on type
+      let displayValue = newVal;
+      if (type === 'boolean') {
+        displayValue = newVal === true ? '<span class="badge success">Yes</span>' :
+                       newVal === false ? '<span class="badge warning">No</span>' :
+                       '<span class="badge">-</span>';
+      } else if (type === 'url' && newVal !== '-') {
+        displayValue = `<a href="${newVal}" target="_blank" style="font-size: 11px;">${newVal.substring(0, 40)}...</a>`;
+      }
+
+      // Add change indicator styling
+      const changeIndicator = hasChange
+        ? '<span style="color: #10b981; font-weight: bold; margin-left: 8px;">●</span>'
+        : '';
+
+      return `
+        <div class="result-item" style="${hasChange ? 'background: #ecfdf5; border-left: 3px solid #10b981;' : ''}">
+          <div class="label">${label}${changeIndicator}</div>
+          <div class="value">
+            ${hasChange ? `<span style="text-decoration: line-through; color: #9ca3af; margin-right: 8px;">${current}</span>` : ''}
+            ${displayValue}
+          </div>
+        </div>
+      `;
+    }
+
     async function lookupLead() {
       const leadId = document.getElementById('leadId').value.trim();
       if (!leadId) {
@@ -1713,6 +1747,25 @@
                 <div class="result-item"><div class="label">Lead Source</div><div class="value">${data.salesforce.LeadSource || '-'}</div></div>
                 <div class="result-item"><div class="label">Status</div><div class="value">${data.salesforce.Status || '-'}</div></div>
                 ${data.salesforce.Score__c !== null && data.salesforce.Score__c !== undefined ? `<div class="result-item"><div class="label">Current Score</div><div class="value">${data.salesforce.Score__c}</div></div>` : ''}
+              </div>
+            </div>
+          `;
+        }
+
+        if (newSalesforceFields) {
+          html += `
+            <div class="result-section">
+              <h5>Fields That Will Be Updated (Preview)</h5>
+              <div class="result-grid">
+                ${renderFieldWithChange('Has Website', data.salesforce.Has_Website__c, newSalesforceFields.has_website, 'boolean')}
+                ${renderFieldWithChange('Number of Employees', data.salesforce.Number_of_Employees__c, newSalesforceFields.number_of_employees, 'text')}
+                ${renderFieldWithChange('GBP Reviews', data.salesforce.Number_of_GBP_Reviews__c, newSalesforceFields.number_of_gbp_reviews, 'text')}
+                ${renderFieldWithChange('Years in Business', data.salesforce.Number_of_Years_in_Business__c, newSalesforceFields.number_of_years_in_business, 'text')}
+                ${renderFieldWithChange('Has GMB', data.salesforce.Has_GMB__c, newSalesforceFields.has_gmb, 'boolean')}
+                ${renderFieldWithChange('GMB URL', data.salesforce.GMB_URL__c, newSalesforceFields.gmb_url, 'url')}
+                ${renderFieldWithChange('Location Type', data.salesforce.Location_Type__c, newSalesforceFields.location_type, 'text')}
+                ${renderFieldWithChange('Business License', data.salesforce.Business_License__c, newSalesforceFields.business_license, 'boolean')}
+                ${renderFieldWithChange('Spending on Marketing', data.salesforce.Spending_on_Marketing__c, newSalesforceFields.spending_on_marketing, 'boolean')}
               </div>
             </div>
           `;
