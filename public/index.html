@@ -1510,12 +1510,41 @@
               ${recent_enrichments.length === 0 ? '<tr><td colspan="7" style="text-align: center; color: #6b7280;">No enrichments in this period</td></tr>' : ''}
             </tbody>
           </table>
+
+          <!-- Pagination Controls -->
+          ${kpiEnrichmentsPagination.totalPages > 1 ? `
+            <div class="pagination-controls" style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px; padding: 15px; background: #f9fafb; border-radius: 8px;">
+              <button
+                onclick="goToKPIEnrichmentsPage(${kpiEnrichmentsPagination.currentPage - 1})"
+                ${kpiEnrichmentsPagination.currentPage === 1 ? 'disabled' : ''}
+                style="padding: 8px 16px; border: 1px solid #d1d5db; background: white; border-radius: 6px; cursor: ${kpiEnrichmentsPagination.currentPage === 1 ? 'not-allowed' : 'pointer'}; opacity: ${kpiEnrichmentsPagination.currentPage === 1 ? '0.5' : '1'};"
+              >
+                ← Previous
+              </button>
+              <div style="font-size: 14px; color: #6b7280;">
+                Page ${kpiEnrichmentsPagination.currentPage} of ${kpiEnrichmentsPagination.totalPages}
+                (${kpiEnrichmentsPagination.totalCount.toLocaleString()} total enrichments)
+              </div>
+              <button
+                onclick="goToKPIEnrichmentsPage(${kpiEnrichmentsPagination.currentPage + 1})"
+                ${kpiEnrichmentsPagination.currentPage === kpiEnrichmentsPagination.totalPages ? 'disabled' : ''}
+                style="padding: 8px 16px; border: 1px solid #d1d5db; background: white; border-radius: 6px; cursor: ${kpiEnrichmentsPagination.currentPage === kpiEnrichmentsPagination.totalPages ? 'not-allowed' : 'pointer'}; opacity: ${kpiEnrichmentsPagination.currentPage === kpiEnrichmentsPagination.totalPages ? '0.5' : '1'};"
+              >
+                Next →
+              </button>
+            </div>
+          ` : ''}
         </div>
       `;
 
       // Render charts
       renderKPIHourlyChart(primary.hourly || []);
       renderKPIDailyChart(primary.daily || []);
+    }
+
+    function goToKPIEnrichmentsPage(page) {
+      if (page < 1 || page > kpiEnrichmentsPagination.totalPages) return;
+      loadKPIs(page);
     }
 
     function renderKPIHourlyChart(hourlyData) {
