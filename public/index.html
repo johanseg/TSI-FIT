@@ -1083,7 +1083,7 @@
               </tr>
             </thead>
             <tbody>
-              ${stats.byLeadSource.slice(0, 10).map(source => `
+              ${stats.byLeadSource.filter(s => s.leadSource && s.leadSource.toLowerCase() !== 'unknown').slice(0, 10).map(source => `
                 <tr>
                   <td><strong>${source.leadSource}</strong></td>
                   <td>${source.totalLeads.toLocaleString()}</td>
@@ -1103,7 +1103,7 @@
       `;
 
       renderScoreChart(stats.scoreDistribution);
-      renderSourceChart(stats.byLeadSource);
+      renderSourceChart(stats.byLeadSource.filter(s => s.leadSource && s.leadSource.toLowerCase() !== 'unknown'));
       if (dbStats && dbStats.recentActivity.length > 0) {
         renderActivityChart(dbStats.recentActivity);
       }
