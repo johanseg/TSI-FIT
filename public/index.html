@@ -1633,6 +1633,72 @@
           return;
         }
 
+        // Fetch enrichment preview to compute new Salesforce field values
+        let newSalesforceFields = null;
+        try {
+          const previewResponse = await fetchApi('/api/enrich-by-id', {
+            method: 'POST',
+            body: JSON.stringify({
+              salesforce_lead_id: leadId,
+              update_salesforce: false
+            })
+          });
+          const previewData = await previewResponse.json();
+
+          // Compute new Salesforce field values from enrichment data
+          const googlePlaces = previewData.enrichment_summary?.google_places;
+          const pdl = previewData.enrichment_summary?.pdl;
+          const websiteTech = previewData.enrichment_summary?.website_tech;
+
+          // Helper function to map employee count
+          const mapEmployeeCount = (count) => {
+            if (count === undefined || count === null) return null;
+            if (count === 0) return '0';
+            if (count <= 2) return '1 - 2';
+            if (count <= 5) return '3 - 5';
+            return 'Over 5';
+          };
+
+          // Helper function to map review count
+          const mapGBPReviews = (count) => {
+            if (count === undefined || count === null) return null;
+            return count >= 15 ? 'Over 14' : 'Under 15';
+          };
+
+          // Helper function to map years in business
+          const mapYearsInBusiness = (years) => {
+            if (years === undefined || years === null) return null;
+            if (years < 1) return 'Under 1 Year';
+            if (years <= 3) return '1 - 3 Years';
+            if (years <= 5) return '3 - 5 Years';
+            return '5 - 10+ years';
+          };
+
+          // Helper function to determine location type
+          const mapLocationType = (gp) => {
+            if (!gp) return null;
+            // Simplified logic based on salesforceFieldMapper.ts
+            if (gp.place_id && !gp.gmb_address) return 'Home Office';
+            if (gp.gmb_address) return 'Physical Location (Office)';
+            return null;
+          };
+
+          newSalesforceFields = {
+            has_website: !!(websiteTech || data.salesforce?.Website || googlePlaces?.gmb_website),
+            number_of_employees: mapEmployeeCount(pdl?.employee_count),
+            number_of_gbp_reviews: mapGBPReviews(googlePlaces?.gmb_review_count),
+            number_of_years_in_business: mapYearsInBusiness(pdl?.years_in_business),
+            has_gmb: !!googlePlaces?.place_id,
+            gmb_url: googlePlaces?.place_id ? `https://www.google.com/maps/place/?q=place_id:${googlePlaces.place_id}` : null,
+            location_type: mapLocationType(googlePlaces),
+            business_license: null,
+            spending_on_marketing: (pdl?.years_in_business > 2 && websiteTech?.pixel_count > 0) || false
+          };
+        } catch (previewError) {
+          console.error('Failed to fetch enrichment preview:', previewError);
+          // Continue without preview - just won't show change indicators
+        }
+
         let html = '<div class="enrichment-result">';
 
         if (data.salesforce) {
