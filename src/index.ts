@@ -359,7 +359,16 @@ app.get('/api/lead/:salesforceLeadId', async (req, res) => {
     let salesforceLead = null;
     try {
       const salesforce = getSalesforceService();
-      const query = `
+
+      // Validate Salesforce ID format to prevent SOQL injection
+      const { validateSalesforceId } = await import('./utils/validation.js');
+      if (!validateSalesforceId(salesforceLeadId)) {
+        logger.warn('Invalid Salesforce Lead ID format', { salesforceLeadId });
+        return res.status(400).json({ error: 'Invalid Salesforce Lead ID format' });
+      }
+
+      // Use parameterized query to prevent SOQL injection
+      const result = await salesforce.query(`
         SELECT Id, Company, Website, Phone, City, State, LeadSource,
                FirstName, LastName, Email, Status, CreatedDate,
                Fit_Score__c, Has_Website__c, Has_GMB__c, GMB_URL__c,
@@ -367,10 +376,13 @@ app.get('/api/lead/:salesforceLeadId', async (req, res) => {
                Number_of_Years_in_Business__c, Location_Type__c
         FROM Lead
         WHERE Id = '${salesforceLeadId}'
-      `;
-      const result = await salesforce.query(query);
-      if (result.records.length > 0) {
+        LIMIT 1
+      `);
+
+      if (result.records && result.records.length > 0) {
         salesforceLead = result.records[0];
+      } else {
+        logger.warn('Lead not found in Salesforce', { salesforceLeadId });
       }
     } catch (sfError) {
       logger.warn('Failed to fetch lead from Salesforce', { salesforceLeadId, error: sfError });

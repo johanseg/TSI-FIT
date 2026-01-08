@@ -727,6 +727,20 @@
         </div>
       </div>
 
+      <!-- API Key Configuration -->
+      <div class="card" style="margin-top: 20px;">
+        <h3>API Key Configuration</h3>
+        <p style="color: #6b7280; margin-bottom: 15px;">Enter your API key to access protected admin features (setup, logs, manual enrichment).</p>
+        <div class="form-group">
+          <label for="apiKeyInput">API Key</label>
+          <div style="display: flex; gap: 12px; align-items: flex-start;">
+            <input type="password" id="apiKeyInput" placeholder="Enter your API key" style="flex: 1;">
+            <button class="secondary" onclick="saveApiKey()">Save</button>
+          </div>
+          <small id="apiKeyStatus" style="display: block; margin-top: 8px;"></small>
+        </div>
+      </div>
+
       <div id="setup-content">
         <div class="loading">Loading system status</div>
       </div>
@@ -912,18 +926,36 @@
       if (tab === 'dashboard') loadDashboard();
       else if (tab === 'kpis') loadKPIs();
       else if (tab === 'unenriched') loadUnenrichedLeads();
-      else if (tab === 'setup') { loadSetup(); loadLogs(); }
+      else if (tab === 'setup') { loadSavedApiKey(); loadSetup(); loadLogs(); }
     }
 
-    // Fetch helper (no auth needed for dashboard endpoints)
+    // Get API key from localStorage
+    function getApiKey() {
+      return localStorage.getItem('api_key');
+    }
+
+    // Set API key in localStorage
+    function setApiKey(key) {
+      localStorage.setItem('api_key', key);
+    }
+
+    // Fetch helper with optional API key authentication
     async function fetchApi(url, options = {}) {
       try {
+        const headers = {
+          'Content-Type': 'application/json',
+          ...(options.headers || {}),
+        };
+
+        // Add API key for protected endpoints (setup, manual enrich, batch)
+        const apiKey = getApiKey();
+        if (apiKey && (url.includes('/api/setup/') || url.includes('/api/lead/') || url.includes('/api/batch/'))) {
+          headers['X-API-Key'] = apiKey;
+        }
+
         const response = await fetch(url, {
           ...options,
-          headers: {
-            'Content-Type': 'application/json',
-            ...(options.headers || {}),
-          },
+          headers,
         });
         return response;
       } catch (error) {
@@ -2426,6 +2458,37 @@
       } catch (error) {
         console.error('Logs load error:', error);
         content.innerHTML = `<div class="error-message">Error loading logs: ${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    // API Key configuration
+    function saveApiKey() {
+      const key = document.getElementById('apiKeyInput').value.trim();
+      const statusDiv = document.getElementById('apiKeyStatus');
+
+      if (key) {
+        setApiKey(key);
+        statusDiv.innerHTML = '<span style="color: #10b981;">✓ API key saved successfully</span>';
+        setTimeout(() => { statusDiv.innerHTML = ''; }, 3000);
+        // Reload setup and logs after saving API key
+        setTimeout(() => {
+          loadSetup();
+          loadLogs();
+        }, 500);
+      } else {
+        statusDiv.innerHTML = '<span style="color: #ef4444;">Please enter an API key</span>';
+      }
+    }
+
+    // Load saved API key on page load
+    function loadSavedApiKey() {
+      const savedKey = getApiKey();
+      if (savedKey) {
+        const input = document.getElementById('apiKeyInput');
+        if (input) {
+          input.value = savedKey;
+          document.getElementById('apiKeyStatus').innerHTML = '<span style="color: #10b981;">✓ API key configured</span>';
+        }
       }
     }
 
