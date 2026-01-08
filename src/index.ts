@@ -134,8 +134,8 @@ app.get('/health', (_req, res) => {
 
 // ============ Setup API Endpoints ============
 
-// Get system status and configuration (no auth - internal dashboard)
-app.get('/api/setup/status', async (_req, res) => {
+// Get system status and configuration (requires API key)
+app.get('/api/setup/status', authenticateApiKey, async (_req, res) => {
   try {
     // Check database connection
     let dbStatus = { connected: false, error: '' };
@@ -192,8 +192,8 @@ app.get('/api/setup/status', async (_req, res) => {
   }
 });
 
-// Get recent logs (no auth - internal dashboard)
-app.get('/api/setup/logs', (req, res) => {
+// Get recent logs (requires API key)
+app.get('/api/setup/logs', authenticateApiKey, (req, res) => {
   const limit = Math.min(parseInt(req.query.limit as string) || 100, MAX_LOG_ENTRIES);
   const level = req.query.level as string;
 
@@ -209,8 +209,8 @@ app.get('/api/setup/logs', (req, res) => {
   });
 });
 
-// Test database connection (no auth - internal dashboard)
-app.post('/api/setup/test-database', async (_req, res) => {
+// Test database connection (requires API key)
+app.post('/api/setup/test-database', authenticateApiKey, async (_req, res) => {
   try {
     const result = await pool.query(`
       SELECT
@@ -227,8 +227,8 @@ app.post('/api/setup/test-database', async (_req, res) => {
   }
 });
 
-// Get database stats (no auth - internal dashboard)
-app.get('/api/setup/database-stats', async (_req, res) => {
+// Get database stats (requires API key)
+app.get('/api/setup/database-stats', authenticateApiKey, async (_req, res) => {
   try {
     const enrichmentStats = await pool.query(`
       SELECT
