@@ -229,8 +229,16 @@ export class DashboardStatsService {
     const soqlStartDate = `${startDateStr}T00:00:00Z`;
     const soqlEndDate = `${endDateStr}T23:59:59Z`;
 
-    // Build lead source filter if provided
-    const leadSourceFilter = leadSource ? `AND LeadSource = '${leadSource}'` : '';
+    // Build lead source filter if provided (sanitize input to prevent SOQL injection)
+    let leadSourceFilter = '';
+    if (leadSource) {
+      // Sanitize leadSource: only allow alphanumeric, spaces, and common characters
+      const sanitizedLeadSource = leadSource.replace(/[^a-zA-Z0-9\s\-_]/g, '');
+      if (sanitizedLeadSource !== leadSource) {
+        throw new Error('Invalid characters in leadSource parameter');
+      }
+      leadSourceFilter = `AND LeadSource = '${sanitizedLeadSource}'`;
+    }
 
     // Helper to map lead records
     const mapLeads = (records: any[]): UnenrichedLead[] => records.map(lead => ({

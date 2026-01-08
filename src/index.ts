@@ -1603,6 +1603,16 @@ app.post('/api/workato/enrich', authenticateApiKey, async (req, res) => {
       return res.status(400).json({ error: 'salesforce_lead_id is required' });
     }
 
+    // Validate Salesforce Lead ID to prevent SOQL injection
+    const { validateSalesforceId } = await import('./utils/validation.js');
+    if (!validateSalesforceId(salesforce_lead_id)) {
+      logger.warn('Invalid Salesforce Lead ID provided', { requestId, salesforceLeadId: salesforce_lead_id });
+      return res.status(400).json({
+        error: 'Invalid Salesforce Lead ID format',
+        request_id: requestId
+      });
+    }
+
     // Fetch lead data from Salesforce
     const salesforce = getSalesforceService();
     const query = `

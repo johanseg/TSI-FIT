@@ -181,6 +181,12 @@ export class SalesforceService {
    */
   async verifyLead(leadId: string): Promise<{ exists: boolean; isConverted: boolean; error?: string }> {
     try {
+      // Validate Salesforce Lead ID to prevent SOQL injection
+      const { validateSalesforceId } = await import('../utils/validation.js');
+      if (!validateSalesforceId(leadId)) {
+        return { exists: false, isConverted: false, error: 'Invalid Salesforce Lead ID format' };
+      }
+
       await this.connect();
       this.ensureConnected();
 
