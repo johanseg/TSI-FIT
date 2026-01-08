@@ -1498,7 +1498,7 @@
             <tbody>
               ${recent_enrichments.map(e => `
                 <tr>
-                  <td><code style="font-size: 11px;">${e.salesforce_lead_id}</code></td>
+                  <td><a href="https://townsquaremedia.lightning.force.com/lightning/r/Lead/${e.salesforce_lead_id}/view" target="_blank" style="font-family: monospace; font-size: 11px;">${e.salesforce_lead_id}</a></td>
                   <td><span class="badge ${e.enrichment_status === 'completed' ? 'success' : 'warning'}">${e.enrichment_status}</span></td>
                   <td><strong>${e.fit_score ?? '-'}</strong></td>
                   <td>${e.has_gmb ? '<span class="badge success">Yes</span>' : '<span class="badge warning">No</span>'}</td>
