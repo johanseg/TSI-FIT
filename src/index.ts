@@ -697,6 +697,8 @@ app.get('/api/dashboard/unenriched', async (req, res) => {
 app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
   try {
     const period = req.query.period as string || 'today';
+    const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
+    const offset = parseInt(req.query.offset as string) || 0;
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
@@ -866,8 +868,8 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
       }));
     };
 
-    // Get recent enrichments within a date range
-    const getRecentEnrichments = async (startDate: Date, endDate: Date, limit: number) => {
+    // Get recent enrichments within a date range with pagination
+    const getRecentEnrichments = async (startDate: Date, endDate: Date, limit: number, offset: number) => {
       const result = await pool.query(`
         SELECT
           salesforce_lead_id,
@@ -880,8 +882,8 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
         FROM lead_enrichments
         WHERE created_at >= $1 AND created_at <= $2
         ORDER BY created_at DESC
-        LIMIT $3
-      `, [startDate.toISOString(), endDate.toISOString(), limit]);
+        LIMIT $3 OFFSET $4
+      `, [startDate.toISOString(), endDate.toISOString(), limit, offset]);
 
       return result.rows;
     };
@@ -892,7 +894,7 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
       getStatsForRange(comparisonStart, comparisonEnd),
       getHourlyStats(primaryStart, primaryEnd),
       getDailyStats(primaryStart, primaryEnd),
-      getRecentEnrichments(primaryStart, primaryEnd, 10),
+      getRecentEnrichments(primaryStart, primaryEnd, limit, offset),
     ]);
 
     // Calculate trends (percentage change)
@@ -923,6 +925,7 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
         successful: calcTrend(primaryStats.successful, comparisonStats.successful),
       },
       recent_enrichments: recentEnrichments,
+      total_enrichments: primaryStats.total_enriched, // Total count for pagination
       generated_at: now.toISOString(),
     });
   } catch (error) {
