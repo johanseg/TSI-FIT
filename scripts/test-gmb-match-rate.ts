@@ -28,15 +28,15 @@ async function testMatchRate(sampleSize: number = 200) {
       SELECT
         id,
         salesforce_lead_id,
-        company,
+        business_name as company,
         phone,
         city,
         state,
         website,
-        street,
-        postalcode as zip
+        address as street,
+        zip
       FROM leads
-      WHERE company IS NOT NULL
+      WHERE business_name IS NOT NULL
         AND city IS NOT NULL
         AND state IS NOT NULL
       ORDER BY RANDOM()
