@@ -34,7 +34,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: Standardize date selector component across all dashboard views
+- [x] 02-01: Standardize date selector component across all dashboard views
 - [ ] 02-02: Add pagination to auto-enrichment views
 - [ ] 02-03: Convert Salesforce Lead IDs to clickable links and filter "Unknown" leads
 
@@ -63,6 +63,6 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Security Hardening | 2/2 | Complete | 2026-01-08 |
-| 2. UX Improvements | 0/3 | Not started | - |
+| 2. UX Improvements | 1/3 | In progress | - |
 | 3. Manual Enrichment Enhancement | 0/1 | Not started | - |
 | 4. GMB Match Rate Optimization | 0/2 | Not started | - |
