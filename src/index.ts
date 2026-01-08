@@ -1120,6 +1120,17 @@ app.post('/api/dashboard/enrich-batch-gmb-only', async (req, res) => {
     return res.status(400).json({ error: 'Maximum 100 leads per batch for GMB-only enrichment' });
   }
 
+  // Validate Salesforce Lead IDs to prevent SOQL injection
+  const { validateSalesforceIds } = await import('./utils/validation.js');
+  const validation = validateSalesforceIds(lead_ids);
+  if (!validation.valid) {
+    logger.warn('Invalid Salesforce Lead IDs provided', { invalidIds: validation.invalidIds });
+    return res.status(400).json({
+      error: 'Invalid Salesforce Lead IDs',
+      invalidIds: validation.invalidIds
+    });
+  }
+
   const maxConcurrency = Math.min(Math.max(1, concurrency), 20);
   const salesforce = getSalesforceService();
 
