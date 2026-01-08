@@ -7,6 +7,47 @@ import { PeopleDataLabsService } from './peopleDataLabs';
 import { GooglePlacesService } from './googlePlaces';
 
 /**
+ * Check if a URL is a Google/GMB URL
+ */
+function isGoogleOrGmbUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return hostname.includes('google.com') ||
+           hostname.includes('google.') ||
+           hostname.includes('.google.') ||
+           hostname === 'google.com';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if a URL is a subdomain (not a root domain)
+ */
+function isSubdomain(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const hostname = new URL(url).hostname.toLowerCase().replace('www.', '');
+    // Count dots - if more than 1, it's likely a subdomain (e.g., shop.example.com)
+    // Exception: common TLDs like .co.uk count as 2 parts
+    const parts = hostname.split('.');
+    if (parts.length <= 2) return false; // example.com = not subdomain
+
+    // Check for common multi-part TLDs
+    const multiPartTlds = ['co.uk', 'com.au', 'co.nz', 'co.za'];
+    const lastTwoParts = parts.slice(-2).join('.');
+    if (multiPartTlds.includes(lastTwoParts) && parts.length === 3) {
+      return false; // example.co.uk = not subdomain
+    }
+
+    return true; // shop.example.com = subdomain
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Calculate Fit Score based on enrichment data
  *
  * Data sources (in priority order):
@@ -15,7 +56,8 @@ import { GooglePlacesService } from './googlePlaces';
  * - Website Tech: pixel detection for bonus points
  *
  * Solvency Score (0-95):
- * - Website: +10 if present
+ * - GMB Match: +10 if GMB found (place_id exists)
+ * - Website: +10 if custom domain, +5 if GMB/Google URL, +0 if subdomain/social
  * - Reviews: +0 (<5), +10 (5-14), +20 (15-29), +25 (≥30)
  * - Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
  * - Employees: +0 (<2), +5 (2-4), +15 (>5)
@@ -37,6 +79,7 @@ import { GooglePlacesService } from './googlePlaces';
 export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResult {
   const breakdown: ScoreBreakdown = {
     solvency_score: {
+      gmb_match: 0,
       website: 0,
       reviews: 0,
       years_in_business: 0,
@@ -52,20 +95,37 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     final_score: 0,
   };
 
-  // Calculate Solvency Score (0-85)
+  // Calculate Solvency Score (0-95)
   const googlePlaces = enrichmentData.google_places;
   const pdl = enrichmentData.pdl;
   const clay = enrichmentData.clay; // Legacy fallback
   const websiteTech = enrichmentData.website_tech;
 
-  // Website: +10 if present
-  // Consider website present if we have website tech data, Google Places has website, PDL confirmed, or GMB profile exists
-  if (
-    websiteTech?.has_meta_pixel !== undefined ||
-    googlePlaces?.gmb_website ||
-    googlePlaces?.place_id ||
-    pdl?.website_confirmed
-  ) {
+  // GMB Match: +10 if place_id exists
+  if (googlePlaces?.place_id) {
+    breakdown.solvency_score.gmb_match = 10;
+  }
+
+  // Website scoring:
+  // +10 if custom domain (not GMB/Google URL, not subdomain)
+  // +5 if GMB/Google URL
+  // +0 if subdomain or no website
+  const websiteUrl = googlePlaces?.gmb_website || pdl?.website_confirmed;
+
+  if (websiteUrl) {
+    const isGoogleUrl = isGoogleOrGmbUrl(websiteUrl);
+    const isSubdomainUrl = isSubdomain(websiteUrl);
+
+    if (isGoogleUrl) {
+      breakdown.solvency_score.website = 5; // GMB/Google URL
+    } else if (isSubdomainUrl) {
+      breakdown.solvency_score.website = 0; // Subdomain gets 0
+    } else {
+      breakdown.solvency_score.website = 10; // Custom domain
+    }
+  } else if (websiteTech?.has_meta_pixel !== undefined) {
+    // If we have website tech data, it means we successfully scanned a website
+    // This implies a real website exists (not GMB/subdomain)
     breakdown.solvency_score.website = 10;
   }
 
@@ -141,6 +201,7 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
   }
 
   breakdown.solvency_score.total =
+    breakdown.solvency_score.gmb_match +
     breakdown.solvency_score.website +
     breakdown.solvency_score.reviews +
     breakdown.solvency_score.years_in_business +

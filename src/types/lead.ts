@@ -104,7 +104,8 @@ export interface EnrichmentData {
 
 export interface ScoreBreakdown {
   solvency_score: {
-    website: number;
+    gmb_match: number; // +10 if GMB found (place_id exists)
+    website: number; // +10 custom domain, +5 GMB/Google URL, +0 subdomain
     reviews: number;
     years_in_business: number;
     employees: number;
