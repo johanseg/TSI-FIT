@@ -49,6 +49,41 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()],
 });
 
+// Environment variable validation - fail fast on missing critical config
+function validateRequiredEnvVars(): void {
+  const requiredVars = [
+    'DATABASE_URL',
+    'GOOGLE_PLACES_API_KEY',
+    'PDL_API_KEY',
+    'API_KEY',
+    'SFDC_CLIENT_ID',
+    'SFDC_CLIENT_SECRET',
+    'SFDC_USERNAME',
+    'SFDC_PASSWORD',
+    'SFDC_SECURITY_TOKEN',
+    'SFDC_LOGIN_URL',
+  ];
+
+  const missingVars = requiredVars.filter(varName => !process.env[varName]);
+
+  if (missingVars.length > 0) {
+    logger.error('Missing required environment variables', {
+      missingVars,
+      message: 'Server cannot start without all required configuration',
+    });
+    console.error('\n❌ ERROR: Missing required environment variables:');
+    missingVars.forEach(varName => {
+      console.error(`  - ${varName}`);
+    });
+    console.error('\nPlease configure all required variables in .env file and try again.\n');
+    process.exit(1);
+  }
+
+  logger.info('Environment validation passed', {
+    configuredVars: requiredVars.length,
+  });
+}
+
 // Database pool
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -1906,6 +1941,9 @@ const shutdown = async () => {
 
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
+
+// Validate environment variables before starting server
+validateRequiredEnvVars();
 
 // Start server
 const PORT = process.env.PORT || 4900;
