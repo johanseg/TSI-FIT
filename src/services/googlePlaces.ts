@@ -32,6 +32,27 @@ const BUSINESS_SUFFIXES = [
   'enterprises', 'services', 'solutions', 'group', 'holdings',
 ];
 
+// Strategy names for analytics tracking
+const STRATEGIES = {
+  PHONE_ORIGINAL: 'phone-original',
+  PHONE_PLUS1: 'phone-plus1',
+  PHONE_FORMATTED: 'phone-formatted',
+  PHONE_DIGITS: 'phone-digits',
+  NAME_FULL_ADDRESS: 'name-full-address',
+  NAME_STREET_ONLY: 'name-street-only',
+  NAME_STREET_ZIP: 'name-street-zip',
+  NAME_CITY_STATE: 'name-city-state',
+  NAME_STATE: 'name-state',
+  NAME_ZIP: 'name-zip',
+  NAME_PHONE: 'name-phone',
+  WEBSITE_DOMAIN: 'website-domain',
+  ABBREVIATED_CITY_STATE: 'abbreviated-city-state',
+  ABBREVIATED_ZIP: 'abbreviated-zip',
+  DOMAIN_NAME_CITY_STATE: 'domain-name-city-state',
+  DOMAIN_NAME_ZIP: 'domain-name-zip',
+  NAME_ONLY: 'name-only',
+};
+
 /**
  * Normalize business name for fuzzy matching
  * Removes common suffixes like LLC, Inc, Corp and normalizes whitespace
@@ -231,6 +252,13 @@ export class GooglePlacesService {
   private lastRequestTime: number = 0;
   private minRequestInterval: number = 1000; // 1 request per second
 
+  // Analytics tracking for match rate measurement
+  private static matchStats = {
+    totalAttempts: 0,
+    totalMatches: 0,
+    strategySuccesses: {} as Record<string, number>,
+  };
+
   constructor(apiKey: string) {
     if (!apiKey) {
       throw new Error('GOOGLE_PLACES_API_KEY is required');
@@ -248,13 +276,24 @@ export class GooglePlacesService {
   private async rateLimit(): Promise<void> {
     const now = Date.now();
     const timeSinceLastRequest = now - this.lastRequestTime;
-    
+
     if (timeSinceLastRequest < this.minRequestInterval) {
       const waitTime = this.minRequestInterval - timeSinceLastRequest;
       await sleep(waitTime);
     }
-    
+
     this.lastRequestTime = Date.now();
+  }
+
+  /**
+   * Record a successful match for analytics
+   */
+  private static recordMatch(strategy: string): void {
+    GooglePlacesService.matchStats.totalMatches++;
+    if (!GooglePlacesService.matchStats.strategySuccesses[strategy]) {
+      GooglePlacesService.matchStats.strategySuccesses[strategy] = 0;
+    }
+    GooglePlacesService.matchStats.strategySuccesses[strategy]++;
   }
 
   async findPlace(
@@ -266,6 +305,9 @@ export class GooglePlacesService {
     address?: string,
     zip?: string
   ): Promise<string | null> {
+    // Track attempt for analytics
+    GooglePlacesService.matchStats.totalAttempts++;
+
     await this.rateLimit();
 
     // Get city coordinates for location biasing (if available)
@@ -282,6 +324,7 @@ export class GooglePlacesService {
       // Variation 1a: Phone as provided (current behavior)
       const placeId = await this.searchForPlace(phone);
       if (placeId) {
+        GooglePlacesService.recordMatch(STRATEGIES.PHONE_ORIGINAL);
         logger.info('Found place by phone (original format)', { phone, placeId });
         return placeId;
       }
@@ -292,6 +335,7 @@ export class GooglePlacesService {
         const phoneWithCountry = `+1${phoneDigits}`;
         const placeIdWithCountry = await this.searchForPlace(phoneWithCountry);
         if (placeIdWithCountry) {
+          GooglePlacesService.recordMatch(STRATEGIES.PHONE_PLUS1);
           logger.info('Found place by phone (+1 format)', { phone: phoneWithCountry, placeId: placeIdWithCountry });
           return placeIdWithCountry;
         }
@@ -303,6 +347,7 @@ export class GooglePlacesService {
         const formatted = `(${phoneDigits.slice(0, 3)}) ${phoneDigits.slice(3, 6)}-${phoneDigits.slice(6)}`;
         const placeIdFormatted = await this.searchForPlace(formatted);
         if (placeIdFormatted) {
+          GooglePlacesService.recordMatch(STRATEGIES.PHONE_FORMATTED);
           logger.info('Found place by phone (formatted)', { phone: formatted, placeId: placeIdFormatted });
           return placeIdFormatted;
         }
@@ -314,6 +359,7 @@ export class GooglePlacesService {
         const unformatted = phoneDigits.slice(-10); // Last 10 digits (removes country code if present)
         const placeIdUnformatted = await this.searchForPlace(unformatted);
         if (placeIdUnformatted) {
+          GooglePlacesService.recordMatch(STRATEGIES.PHONE_DIGITS);
           logger.info('Found place by phone (digits only)', { phone: unformatted, placeId: placeIdUnformatted });
           return placeIdUnformatted;
         }
@@ -329,6 +375,7 @@ export class GooglePlacesService {
         coords?.longitude
       );
       if (placeId) {
+        GooglePlacesService.recordMatch(STRATEGIES.NAME_FULL_ADDRESS);
         logger.info('Found place by business name + full address', { businessName, city, state });
         return placeId;
       }
@@ -340,6 +387,7 @@ export class GooglePlacesService {
       await this.rateLimit();
       const placeId = await this.searchForPlace(`${businessName} ${address}`);
       if (placeId) {
+        GooglePlacesService.recordMatch(STRATEGIES.NAME_STREET_ONLY);
         logger.info('Found place by business name + street only', { businessName, address });
         return placeId;
       }
@@ -350,6 +398,7 @@ export class GooglePlacesService {
       await this.rateLimit();
       const placeId = await this.searchForPlace(`${businessName} ${address} ${zip}`);
       if (placeId) {
+        GooglePlacesService.recordMatch(STRATEGIES.NAME_STREET_ZIP);
         logger.info('Found place by business name + street + zip', { businessName, address, zip });
         return placeId;
       }
@@ -361,6 +410,7 @@ export class GooglePlacesService {
       const query = zip ? `${businessName} ${city}, ${state} ${zip}` : `${businessName} ${city}, ${state}`;
       const placeId = await this.searchForPlace(query, coords?.latitude, coords?.longitude);
       if (placeId) {
+        GooglePlacesService.recordMatch(STRATEGIES.NAME_CITY_STATE);
         logger.info('Found place by business name + city/state', { businessName, city, state });
         return placeId;
       }
@@ -375,6 +425,7 @@ export class GooglePlacesService {
         coords?.longitude
       );
       if (placeId) {
+        GooglePlacesService.recordMatch(STRATEGIES.NAME_STATE);
         logger.info('Found place by business name + state', { businessName, state });
         return placeId;
       }
@@ -385,6 +436,7 @@ export class GooglePlacesService {
       await this.rateLimit();
       const placeId = await this.searchForPlace(`${businessName} ${zip}`);
       if (placeId) {
+        GooglePlacesService.recordMatch(STRATEGIES.NAME_ZIP);
         logger.info('Found place by business name + zip', { businessName, zip });
         return placeId;
       }
@@ -395,6 +447,7 @@ export class GooglePlacesService {
       await this.rateLimit();
       const placeId = await this.searchForPlace(`${businessName} ${phone}`);
       if (placeId) {
+        GooglePlacesService.recordMatch(STRATEGIES.NAME_PHONE);
         logger.info('Found place by business name + phone', { businessName, phone });
         return placeId;
       }
@@ -407,6 +460,7 @@ export class GooglePlacesService {
         const domain = new URL(website).hostname.replace('www.', '');
         const placeId = await this.searchForPlace(domain);
         if (placeId) {
+          GooglePlacesService.recordMatch(STRATEGIES.WEBSITE_DOMAIN);
           logger.info('Found place by website domain', { domain });
           return placeId;
         }
@@ -430,6 +484,7 @@ export class GooglePlacesService {
           coords?.longitude
         );
         if (placeId) {
+          GooglePlacesService.recordMatch(STRATEGIES.ABBREVIATED_CITY_STATE);
           logger.info('Found place by abbreviated name + city/state', { abbreviatedName, city, state });
           return placeId;
         }
@@ -440,6 +495,7 @@ export class GooglePlacesService {
         await this.rateLimit();
         const placeId = await this.searchForPlace(`${abbreviatedName} ${zip}`);
         if (placeId) {
+          GooglePlacesService.recordMatch(STRATEGIES.ABBREVIATED_ZIP);
           logger.info('Found place by abbreviated name + zip', { abbreviatedName, zip });
           return placeId;
         }
@@ -456,6 +512,7 @@ export class GooglePlacesService {
           await this.rateLimit();
           const placeId = await this.searchForPlace(`${domainBusinessName} ${city}, ${state}`);
           if (placeId) {
+            GooglePlacesService.recordMatch(STRATEGIES.DOMAIN_NAME_CITY_STATE);
             logger.info('Found place by domain-derived name + city/state', { domainBusinessName, city, state });
             return placeId;
           }
@@ -466,6 +523,7 @@ export class GooglePlacesService {
           await this.rateLimit();
           const placeId = await this.searchForPlace(`${domainBusinessName} ${zip}`);
           if (placeId) {
+            GooglePlacesService.recordMatch(STRATEGIES.DOMAIN_NAME_ZIP);
             logger.info('Found place by domain-derived name + zip', { domainBusinessName, zip });
             return placeId;
           }
@@ -477,6 +535,7 @@ export class GooglePlacesService {
     await this.rateLimit();
     const placeId = await this.searchForPlace(businessName);
     if (placeId) {
+      GooglePlacesService.recordMatch(STRATEGIES.NAME_ONLY);
       logger.info('Found place by business name only', { businessName });
       return placeId;
     }
@@ -1002,6 +1061,48 @@ export class GooglePlacesService {
    */
   static isServiceAreaBusiness(googlePlacesData: GooglePlacesData): boolean {
     return this.getLocationClassification(googlePlacesData) === 'service_area';
+  }
+
+  /**
+   * Get match rate statistics and reset counters
+   * Used for analyzing which search strategies are most effective
+   */
+  static getMatchStats(): {
+    totalAttempts: number;
+    totalMatches: number;
+    matchRate: number;
+    strategySuccesses: Record<string, number>;
+    topStrategies: Array<{ strategy: string; count: number; percentage: number }>;
+  } {
+    const matchRate = this.matchStats.totalAttempts > 0
+      ? (this.matchStats.totalMatches / this.matchStats.totalAttempts) * 100
+      : 0;
+
+    // Sort strategies by success count
+    const topStrategies = Object.entries(this.matchStats.strategySuccesses)
+      .map(([strategy, count]) => ({
+        strategy,
+        count,
+        percentage: this.matchStats.totalMatches > 0 ? (count / this.matchStats.totalMatches) * 100 : 0,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    const stats = {
+      totalAttempts: this.matchStats.totalAttempts,
+      totalMatches: this.matchStats.totalMatches,
+      matchRate: Math.round(matchRate * 10) / 10, // Round to 1 decimal
+      strategySuccesses: { ...this.matchStats.strategySuccesses },
+      topStrategies,
+    };
+
+    // Reset counters for next test
+    this.matchStats = {
+      totalAttempts: 0,
+      totalMatches: 0,
+      strategySuccesses: {},
+    };
+
+    return stats;
   }
 }
 
