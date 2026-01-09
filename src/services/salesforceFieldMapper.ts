@@ -144,8 +144,11 @@ function mapYearsInBusiness(yearsInBusiness?: number): YearsInBusinessPicklist |
  * Location types:
  * - "Retail Location (Store Front)": Customer-facing storefront (retail, restaurant, salon, etc.)
  * - "Physical Location (Office)": Commercial office/shop location (contractors with offices, professional services)
- * - "Home Office": Service-area business operating from home (home-based contractors, mobile services)
- * - null: Residential or unknown (should not receive physical location bonus)
+ * - null: Service-area business, residential, or unknown (do NOT update Location_Type__c unless certain)
+ *
+ * IMPORTANT: Only set Location_Type__c when we're CERTAIN the business has a commercial location.
+ * Service area businesses get +10 points in fit score but should NOT have Location_Type__c updated
+ * unless we have strong signals they have a real commercial building.
  */
 function mapLocationType(
   googlePlaces?: GooglePlacesData
@@ -159,28 +162,25 @@ function mapLocationType(
 
   switch (classification) {
     case 'storefront':
-      // Clear retail/customer-facing location
+      // Clear retail/customer-facing location - CERTAIN it's commercial
       return 'Retail Location (Store Front)';
 
     case 'office':
-      // Commercial office or contractor shop
+      // Commercial office or contractor shop - CERTAIN it's commercial
       return 'Physical Location (Office)';
 
     case 'service_area':
       // Home-based or mobile business (e.g., home-based contractors)
-      // These are legitimate businesses but don't have a commercial location
-      return 'Home Office';
+      // These get +10 in fit score but we should NOT update Location_Type__c
+      // because we're not certain they have a commercial building
+      return null;
 
     case 'residential':
-      // Residential location - not a valid business location type
+      // Residential location - definitely not a commercial location
       return null;
 
     default:
-      // If we have a GMB but can't classify, try basic inference
-      if (googlePlaces.place_id && !googlePlaces.gmb_address) {
-        // Has GMB but no physical address - likely service area business
-        return 'Home Office';
-      }
+      // Unknown classification - don't update Location_Type__c
       return null;
   }
 }

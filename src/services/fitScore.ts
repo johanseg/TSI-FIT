@@ -55,9 +55,9 @@ function isSubdomain(url: string | undefined): boolean {
  * - Google Places: reviews, physical location, website
  * - Website Tech: pixel detection for bonus points
  *
- * Solvency Score (0-95):
+ * Solvency Score (0-100):
  * - GMB Match: +10 if GMB found (place_id exists)
- * - Website: +10 if custom domain, +5 if GMB/Google URL, +0 if subdomain/social
+ * - Website: +15 if custom domain, +5 if GMB/Google URL, +0 if subdomain/social
  * - Reviews: +0 (<5), +10 (5-14), +20 (15-29), +25 (≥30)
  * - Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
  * - Employees: +0 (<2), +5 (2-4), +15 (>5)
@@ -107,7 +107,7 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
   }
 
   // Website scoring:
-  // +10 if custom domain (not GMB/Google URL, not subdomain)
+  // +15 if custom domain (not GMB/Google URL, not subdomain)
   // +5 if GMB/Google URL
   // +0 if subdomain or no website
   const websiteUrl = googlePlaces?.gmb_website || pdl?.website_confirmed;
@@ -121,12 +121,12 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     } else if (isSubdomainUrl) {
       breakdown.solvency_score.website = 0; // Subdomain gets 0
     } else {
-      breakdown.solvency_score.website = 10; // Custom domain
+      breakdown.solvency_score.website = 15; // Custom domain
     }
   } else if (websiteTech?.has_meta_pixel !== undefined) {
     // If we have website tech data, it means we successfully scanned a website
     // This implies a real website exists (not GMB/subdomain)
-    breakdown.solvency_score.website = 10;
+    breakdown.solvency_score.website = 15;
   }
 
   // Reviews: +0 (<5), +10 (5-14), +20 (15-29), +25 (≥30)
