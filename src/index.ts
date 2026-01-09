@@ -530,7 +530,8 @@ app.post('/api/enrich-by-id', async (req, res) => {
             filledFromGMB,
             fitScoreResult.fit_score,
             enrichmentData.google_places?.gmb_types,
-            gmbAuditNote
+            gmbAuditNote,
+            lead.LeadSource
           );
           const sfResult = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult, sfUpdateFields);
           salesforceUpdated = sfResult.success;
@@ -958,7 +959,7 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
 
 // Helper function to process a single lead enrichment
 async function enrichSingleLead(
-  lead: { id: string; company: string; phone?: string | null; city?: string | null; state?: string | null; website?: string | null; street?: string | null; postalCode?: string | null },
+  lead: { id: string; company: string; phone?: string | null; city?: string | null; state?: string | null; website?: string | null; street?: string | null; postalCode?: string | null; leadSource?: string | null },
   salesforce: SalesforceService,
   pool: Pool
 ): Promise<{ id: string; success: boolean; fit_score?: number; error?: string; duration_ms?: number }> {
@@ -1044,7 +1045,8 @@ async function enrichSingleLead(
         filledFromGMB,
         fitScoreResult.fit_score,
         enrichmentData.google_places?.gmb_types,
-        gmbAuditNote
+        gmbAuditNote,
+        lead.leadSource || undefined
       );
 
       // Step 6: Update Salesforce
@@ -1794,7 +1796,8 @@ app.post('/api/workato/enrich', authenticateApiKey, async (req, res) => {
           filledFromGMB,
           fitScoreResult.fit_score,
           enrichmentData.google_places?.gmb_types,
-          gmbAuditNote
+          gmbAuditNote,
+          lead.LeadSource
         );
         const sfResult = await salesforce.updateLead(salesforce_lead_id, enrichmentData, fitScoreResult, sfUpdateFields);
         salesforceUpdated = sfResult.success;

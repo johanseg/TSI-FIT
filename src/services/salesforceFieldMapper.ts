@@ -8,6 +8,7 @@ import {
   GooglePlacesData,
 } from '../types/lead';
 import { GooglePlacesService } from './googlePlaces';
+import { calculateScore } from './scoreMapper';
 
 /**
  * Maps enrichment data to Salesforce custom field values
@@ -575,7 +576,8 @@ export function formatForSalesforceUpdate(
   filledFromGMB?: GMBFilledFields,
   fitScore?: number,
   gmbTypes?: string[],
-  auditNote?: string // Optional audit note to append to Notes__c
+  auditNote?: string, // Optional audit note to append to Notes__c
+  leadSource?: string // Lead source for Score__c calculation (Facebook, TikTok, Google)
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {
     Has_Website__c: fields.has_website,
@@ -592,6 +594,14 @@ export function formatForSalesforceUpdate(
   // Add Fit_Score__c if provided
   if (fitScore !== undefined && fitScore !== null) {
     result.Fit_Score__c = fitScore;
+  }
+
+  // Calculate and add Score__c if lead source is Facebook, TikTok, or Google
+  // Score__c is calculated from Fit Score using thresholds:
+  // 0 → 0, 1-39 → 1, 40-59 → 2, 60-79 → 3, 80-99 → 4, 100+ → 5
+  const calculatedScore = calculateScore(fitScore, leadSource);
+  if (calculatedScore !== null) {
+    result.Score__c = calculatedScore;
   }
 
   // Always overwrite Lead_Vertical__c from GMB types if we can determine it
