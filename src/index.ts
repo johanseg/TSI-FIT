@@ -14,6 +14,7 @@ import { calculateFitScore } from './services/fitScore';
 import { SalesforceService } from './services/salesforce';
 import { DashboardStatsService } from './services/dashboardStats';
 import { mapToSalesforceFields, formatForSalesforceUpdate, getFilledFieldsFromGMB, mapGMBTypesToVertical } from './services/salesforceFieldMapper';
+import { calculateScore } from './services/scoreMapper';
 
 // Types
 import { EnrichmentData, SalesforceEnrichmentFields } from './types/lead';
@@ -563,16 +564,19 @@ app.post('/api/enrich-by-id', async (req, res) => {
       const enrichmentStatus = enrichmentData.google_places || enrichmentData.pdl || enrichmentData.website_tech
         ? 'completed' : 'no_data';
 
+      // Calculate Score__c (0-5) from Fit Score
+      const score = calculateScore(fitScoreResult.fit_score, lead.LeadSource);
+
       try {
         await pool.query(
           `INSERT INTO lead_enrichments (
             salesforce_lead_id, job_id, enrichment_status,
             google_places_data, pdl_data, website_tech_data,
-            fit_score, score_breakdown, salesforce_updated,
+            fit_score, score, score_breakdown, salesforce_updated,
             has_website, number_of_employees, number_of_gbp_reviews,
             number_of_years_in_business, has_gmb, gmb_url,
             location_type, business_license, spending_on_marketing
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
           [
             salesforce_lead_id,
             requestId,
@@ -581,6 +585,7 @@ app.post('/api/enrich-by-id', async (req, res) => {
             enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
             enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
             fitScoreResult.fit_score,
+            score,
             JSON.stringify(fitScoreResult.score_breakdown),
             salesforceUpdated,
             sfFields.has_website,
@@ -876,6 +881,7 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
           salesforce_lead_id,
           enrichment_status,
           fit_score,
+          score,
           salesforce_updated,
           has_gmb,
           has_website,
@@ -962,7 +968,7 @@ async function enrichSingleLead(
   lead: { id: string; company: string; phone?: string | null; city?: string | null; state?: string | null; website?: string | null; street?: string | null; postalCode?: string | null; leadSource?: string | null },
   salesforce: SalesforceService,
   pool: Pool
-): Promise<{ id: string; success: boolean; fit_score?: number; error?: string; duration_ms?: number }> {
+): Promise<{ id: string; success: boolean; fit_score?: number; score?: number | null; error?: string; duration_ms?: number }> {
   const startTime = Date.now();
   const requestId = uuidv4();
 
@@ -1052,14 +1058,17 @@ async function enrichSingleLead(
       // Step 6: Update Salesforce
       const sfResult = await salesforce.updateLead(lead.id, enrichmentData, fitScoreResult, sfUpdateFields);
 
+      // Calculate Score__c (0-5) from Fit Score
+      const score = calculateScore(fitScoreResult.fit_score, lead.leadSource);
+
       // Store in local database
       try {
         await pool.query(
           `INSERT INTO lead_enrichments (
             salesforce_lead_id, job_id, enrichment_status,
             google_places_data, pdl_data, website_tech_data,
-            fit_score, score_breakdown, salesforce_updated
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            fit_score, score, score_breakdown, salesforce_updated
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [
             lead.id,
             requestId,
@@ -1068,6 +1077,7 @@ async function enrichSingleLead(
             enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
             enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
             fitScoreResult.fit_score,
+            score,
             JSON.stringify(fitScoreResult.score_breakdown),
             sfResult.success,
           ]
@@ -1078,12 +1088,12 @@ async function enrichSingleLead(
 
       const duration = Date.now() - startTime;
       if (sfResult.success) {
-        return { id: lead.id, success: true, fit_score: fitScoreResult.fit_score, duration_ms: duration };
+        return { id: lead.id, success: true, fit_score: fitScoreResult.fit_score, score, duration_ms: duration };
       } else {
         const errorMsg = sfResult.error
           ? `${sfResult.error.code}: ${sfResult.error.message}`
           : 'Failed to update Salesforce';
-        return { id: lead.id, success: false, error: errorMsg, duration_ms: duration };
+        return { id: lead.id, success: false, error: errorMsg, fit_score: fitScoreResult.fit_score, score, duration_ms: duration };
       }
     } finally {
       await websiteTech.close();
@@ -1522,17 +1532,20 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
 
       const enrichmentStatus = hasAnyEnrichment ? 'completed' : 'no_data';
 
+      // Score__c is not calculated here since we don't know the lead source from the payload
+      // It will be calculated when the lead is fetched from Salesforce in other endpoints
+
       // Store enrichment record in database with SF-aligned fields
       try {
         await pool.query(
           `INSERT INTO lead_enrichments (
             salesforce_lead_id, job_id, enrichment_status,
             google_places_data, pdl_data, website_tech_data,
-            fit_score, score_breakdown,
+            fit_score, score, score_breakdown,
             has_website, number_of_employees, number_of_gbp_reviews,
             number_of_years_in_business, has_gmb, gmb_url,
             location_type, business_license, spending_on_marketing
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
           [
             payload.salesforce_lead_id,
             requestId,
@@ -1541,6 +1554,7 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
             enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
             enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
             fitScoreResult.fit_score,
+            null, // score is null here since we don't have lead_source in payload
             JSON.stringify(fitScoreResult.score_breakdown),
             sfFields.has_website,
             sfFields.number_of_employees,
@@ -1827,16 +1841,19 @@ app.post('/api/workato/enrich', authenticateApiKey, async (req, res) => {
       const enrichmentStatus = enrichmentData.google_places || enrichmentData.pdl || enrichmentData.website_tech
         ? 'completed' : 'no_data';
 
+      // Calculate Score__c (0-5) from Fit Score
+      const score = calculateScore(fitScoreResult.fit_score, lead.LeadSource);
+
       try {
         await pool.query(
           `INSERT INTO lead_enrichments (
             salesforce_lead_id, job_id, enrichment_status,
             google_places_data, pdl_data, website_tech_data,
-            fit_score, score_breakdown, salesforce_updated, salesforce_updated_at,
+            fit_score, score, score_breakdown, salesforce_updated, salesforce_updated_at,
             has_website, number_of_employees, number_of_gbp_reviews,
             number_of_years_in_business, has_gmb, gmb_url,
             location_type, business_license, spending_on_marketing
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
           [
             salesforce_lead_id,
             requestId,
@@ -1845,6 +1862,7 @@ app.post('/api/workato/enrich', authenticateApiKey, async (req, res) => {
             enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
             enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
             fitScoreResult.fit_score,
+            score,
             JSON.stringify(fitScoreResult.score_breakdown),
             salesforceUpdated,
             salesforceUpdated ? new Date() : null,
@@ -1878,6 +1896,7 @@ app.post('/api/workato/enrich', authenticateApiKey, async (req, res) => {
         request_id: requestId,
         enrichment_status: enrichmentStatus,
         fit_score: fitScoreResult.fit_score,
+        score: score,
         salesforce_updated: salesforceUpdated,
         salesforce_error: salesforceError,
         duration_ms: duration,

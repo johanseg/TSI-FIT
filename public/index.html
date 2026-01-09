@@ -1521,6 +1521,7 @@
                 <th>Lead ID</th>
                 <th>Status</th>
                 <th>Fit Score</th>
+                <th>Score</th>
                 <th>GMB</th>
                 <th>Website</th>
                 <th>SF Updated</th>
@@ -1533,13 +1534,14 @@
                   <td><a href="https://townsquaremedia.lightning.force.com/lightning/r/Lead/${e.salesforce_lead_id}/view" target="_blank" style="font-family: monospace; font-size: 11px;">${e.salesforce_lead_id}</a></td>
                   <td><span class="badge ${e.enrichment_status === 'completed' ? 'success' : 'warning'}">${e.enrichment_status}</span></td>
                   <td><strong>${e.fit_score ?? '-'}</strong></td>
+                  <td><strong>${e.score !== null && e.score !== undefined ? e.score : '-'}</strong></td>
                   <td>${e.has_gmb ? '<span class="badge success">Yes</span>' : '<span class="badge warning">No</span>'}</td>
                   <td>${e.has_website ? '<span class="badge success">Yes</span>' : '<span class="badge warning">No</span>'}</td>
                   <td>${e.salesforce_updated ? '<span class="badge success">Yes</span>' : '<span class="badge error">No</span>'}</td>
                   <td style="font-size: 12px; color: #6b7280;">${new Date(e.created_at).toLocaleString()}</td>
                 </tr>
               `).join('')}
-              ${recent_enrichments.length === 0 ? '<tr><td colspan="7" style="text-align: center; color: #6b7280;">No enrichments in this period</td></tr>' : ''}
+              ${recent_enrichments.length === 0 ? '<tr><td colspan="8" style="text-align: center; color: #6b7280;">No enrichments in this period</td></tr>' : ''}
             </tbody>
           </table>
 
@@ -1861,6 +1863,7 @@
               <h5>Fit Score Result</h5>
               <div class="result-grid">
                 <div class="result-item"><div class="label">Fit Score</div><div class="value" style="font-size: 24px; color: #4f46e5;">${data.enrichment.fit_score}</div></div>
+                <div class="result-item"><div class="label">Score (0-5)</div><div class="value" style="font-size: 24px; color: #10b981;">${data.enrichment.score !== null && data.enrichment.score !== undefined ? data.enrichment.score : '-'}</div></div>
                 <div class="result-item"><div class="label">Duration</div><div class="value">${(data.duration_ms / 1000).toFixed(1)}s</div></div>
                 <div class="result-item"><div class="label">Salesforce Updated</div><div class="value">${data.salesforce_updated ? '<span class="badge success">Yes</span>' : '<span class="badge warning">No</span>'}</div></div>
               </div>
@@ -2039,13 +2042,14 @@
               <div class="stat-card"><h3>Failed</h3><div class="value red">${data.failed}</div></div>
             </div>
             <table>
-              <thead><tr><th>Lead ID</th><th>Status</th><th>Fit Score</th></tr></thead>
+              <thead><tr><th>Lead ID</th><th>Status</th><th>Fit Score</th><th>Score (0-5)</th></tr></thead>
               <tbody>
                 ${data.results.map(r => `
                   <tr>
                     <td><code>${r.id}</code></td>
                     <td>${r.success ? '<span class="badge success">Success</span>' : `<span class="badge error">Failed</span>`}</td>
                     <td>${r.fit_score ?? '-'}</td>
+                    <td>${r.score !== null && r.score !== undefined ? r.score : '-'}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -2266,13 +2270,14 @@
               <div class="stat-card"><h3>Failed</h3><div class="value red">${data.failed}</div></div>
             </div>
             <table>
-              <thead><tr><th>Lead ID</th><th>Status</th><th>Fit Score</th></tr></thead>
+              <thead><tr><th>Lead ID</th><th>Status</th><th>Fit Score</th><th>Score (0-5)</th></tr></thead>
               <tbody>
                 ${data.results.map(r => `
                   <tr>
                     <td>${r.id}</td>
                     <td>${r.success ? '<span class="badge success">Success</span>' : `<span class="badge error">Failed</span>`}</td>
                     <td>${r.fit_score ?? '-'}</td>
+                    <td>${r.score !== null && r.score !== undefined ? r.score : '-'}</td>
                   </tr>
                 `).join('')}
               </tbody>
