@@ -2,13 +2,15 @@
 
 This document describes the Salesforce data model and fields used for analytics reporting, specifically for MQL tracking, sales analysis, and cohort LTV calculations.
 
+**Salesforce Instance**: https://townsquare.lightning.force.com
+
 ---
 
 ## Object Overview
 
 We work primarily with two Salesforce objects:
-1. **Lead** - Marketing qualified leads and their lifecycle
-2. **Opportunity** - Sales opportunities and closed-won deals
+1. **Lead** - Marketing qualified leads and their lifecycle (URL format: `https://townsquare.lightning.force.com/lightning/r/Lead/{LEAD_ID}/view`)
+2. **Opportunity** - Sales opportunities and closed-won deals (URL format: `https://townsquare.lightning.force.com/lightning/r/Opportunity/{OPP_ID}/view`)
 
 ---
 

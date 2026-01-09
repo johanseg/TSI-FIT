@@ -146,43 +146,18 @@ function mapYearsInBusiness(yearsInBusiness?: number): YearsInBusinessPicklist |
  * - "Physical Location (Office)": Commercial office/shop location (contractors with offices, professional services)
  * - null: Service-area business, residential, or unknown (do NOT update Location_Type__c unless certain)
  *
- * IMPORTANT: Only set Location_Type__c when we're CERTAIN the business has a commercial location.
- * Service area businesses get +10 points in fit score but should NOT have Location_Type__c updated
- * unless we have strong signals they have a real commercial building.
+ * IMPORTANT: NEVER update the Location_Type__c field regardless of classification.
+ * This field should ONLY be manually set by sales reps or other processes.
+ * The location classification is still used internally for fit score calculation,
+ * but we do not write it back to Salesforce.
  */
 function mapLocationType(
   googlePlaces?: GooglePlacesData
 ): LocationTypePicklist | null {
-  if (!googlePlaces) {
-    return null;
-  }
-
-  // Use the enhanced location classification system
-  const classification = GooglePlacesService.getLocationClassification(googlePlaces);
-
-  switch (classification) {
-    case 'storefront':
-      // Clear retail/customer-facing location - CERTAIN it's commercial
-      return 'Retail Location (Store Front)';
-
-    case 'office':
-      // Commercial office or contractor shop - CERTAIN it's commercial
-      return 'Physical Location (Office)';
-
-    case 'service_area':
-      // Home-based or mobile business (e.g., home-based contractors)
-      // These get +10 in fit score but we should NOT update Location_Type__c
-      // because we're not certain they have a commercial building
-      return null;
-
-    case 'residential':
-      // Residential location - definitely not a commercial location
-      return null;
-
-    default:
-      // Unknown classification - don't update Location_Type__c
-      return null;
-  }
+  // ALWAYS return null - do not update Location_Type__c field in Salesforce
+  // The location is still classified internally for scoring purposes in fitScore.ts
+  // but we never write it back to Salesforce
+  return null;
 }
 
 // Lead_Vertical__c picklist values from Salesforce
