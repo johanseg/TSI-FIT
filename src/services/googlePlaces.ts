@@ -926,10 +926,10 @@ export class GooglePlacesService {
     const types = googlePlacesData.gmb_types?.map(t => t.toLowerCase()) || [];
 
     if (types.length === 0) {
-      // No types available - try to infer from other data
+      // No types available - cannot reliably classify
+      // Give benefit of doubt as service_area (gets +10 for GMB) but not office (+20)
       if (googlePlacesData.gmb_address && googlePlacesData.gmb_is_operational) {
-        // Has a physical address and is operational, likely a real business location
-        return 'office';
+        return 'service_area';
       }
       return null;
     }
@@ -969,6 +969,7 @@ export class GooglePlacesService {
       'handyman', 'locksmith', 'appliance_repair', 'garage_door',
       'tree_service', 'pool_service', 'fencing', 'concrete', 'masonry',
       'home_improvement', 'remodeling', 'renovation', 'construction',
+      'car_detailing', 'auto_detailing', 'mobile_car_wash', 'detailing',
     ];
 
     // Check for residential first
@@ -998,20 +999,25 @@ export class GooglePlacesService {
     );
 
     if (isContractorType) {
-      // Key insight: If Google didn't flag as pureServiceAreaBusiness
-      // AND the business has a physical address, they likely have a real shop/office
-      if (googlePlacesData.gmb_address && googlePlacesData.gmb_is_operational) {
-        // Contractor with physical address - likely has a shop or office
+      // For contractors, require additional signals to classify as "office" (which gives +20 points)
+      // A contractor only gets office classification if they have strong commercial signals
+      const hasStrongCommercialSignals =
+        googlePlacesData.gmb_review_count && googlePlacesData.gmb_review_count >= 15;
+
+      if (googlePlacesData.gmb_address && googlePlacesData.gmb_is_operational && hasStrongCommercialSignals) {
+        // Contractor with physical address AND strong review count - likely has a real shop/office
         return 'office';
       } else {
-        // Contractor without clear physical address - likely home-based
+        // Contractor without strong signals - treat as service area business
+        // They get +10 for verified GMB, but not +20 for physical location
         return 'service_area';
       }
     }
 
-    // Default: if operational with address, assume office
+    // Default: For unknown business types with address, do NOT automatically assume office
+    // Only classify as service_area if they have GMB verification
     if (googlePlacesData.gmb_is_operational && googlePlacesData.gmb_address) {
-      return 'office';
+      return 'service_area';
     }
 
     return null;
