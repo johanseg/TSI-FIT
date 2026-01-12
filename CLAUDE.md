@@ -296,13 +296,13 @@ Returns enrichment KPIs for today, yesterday, this week, and last week.
 
 ## Fit Score Algorithm
 
-**Solvency Score (0-90 points):**
+**Solvency Score (0-85 points):**
 - GMB Match: +5 if Google Business Profile found (place_id exists)
 - Website: +15 (custom domain), +5 (GMB/Google URL), +0 (subdomain/social)
 - Reviews: +0 (<15), +20 (15-29), +25 (≥30)
 - Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
 - Employees: +0 (<2), +5 (2-4), +15 (>5)
-- Physical location: +20 (storefront/office), +10 (service-area business), +0 (residential/unknown)
+- Physical location: +10 (storefront/office), +5 (service-area business), +0 (residential/unknown)
 - Marketing spend: +0 ($0), +5 (<$500), +10 (≥$500)
 
 **Pixel Bonus (0-10 points):**

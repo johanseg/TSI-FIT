@@ -55,19 +55,19 @@ function isSubdomain(url: string | undefined): boolean {
  * - Google Places: reviews, physical location, website
  * - Website Tech: pixel detection for bonus points
  *
- * Solvency Score (0-100):
+ * Solvency Score (0-85):
  * - GMB Match: +5 if GMB found (place_id exists)
  * - Website: +15 if custom domain, +5 if GMB/Google URL, +0 if subdomain/social
  * - Reviews: +0 (<15), +20 (15-29), +25 (≥30)
  * - Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
  * - Employees: +0 (<2), +5 (2-4), +15 (>5)
- * - Physical location: +20 storefront/office, +10 service-area business
+ * - Physical location: +10 storefront/office, +5 service-area business
  * - Marketing spend: +0 ($0), +5 (<$500), +10 (≥$500)
  *
  * Physical Location Detection:
  * - Uses Google Places API pureServiceAreaBusiness flag to detect home-based contractors
- * - Storefront/Office locations get +20 bonus (real commercial location)
- * - Service-area businesses (home-based) get +10 bonus (verified GMB presence)
+ * - Storefront/Office locations get +10 bonus (real commercial location)
+ * - Service-area businesses (home-based) get +5 bonus (verified GMB presence)
  * - Residential/unknown get +0
  *
  * Pixel Bonus (0-10):
@@ -95,7 +95,7 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     final_score: 0,
   };
 
-  // Calculate Solvency Score (0-90)
+  // Calculate Solvency Score (0-85)
   const googlePlaces = enrichmentData.google_places;
   const pdl = enrichmentData.pdl;
   const clay = enrichmentData.clay; // Legacy fallback
@@ -175,16 +175,16 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
   }
 
   // Physical location bonus based on location classification:
-  // - Storefront/Office: +20 (has real commercial location with customer foot traffic or dedicated office)
-  // - Service Area Business: +10 (verified business via GMB, operates from home/mobile)
+  // - Storefront/Office: +10 (has real commercial location with customer foot traffic or dedicated office)
+  // - Service Area Business: +5 (verified business via GMB, operates from home/mobile)
   // - Residential/Unknown: +0 (not a valid business location)
   if (googlePlaces) {
     const classification = GooglePlacesService.getLocationClassification(googlePlaces);
     if (classification === 'storefront' || classification === 'office') {
-      breakdown.solvency_score.physical_location = 20;
+      breakdown.solvency_score.physical_location = 10;
     } else if (classification === 'service_area') {
       // Verified service-area business (home-based contractor with GMB presence)
-      breakdown.solvency_score.physical_location = 10;
+      breakdown.solvency_score.physical_location = 5;
     }
   }
 
