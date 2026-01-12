@@ -1531,7 +1531,7 @@
             <tbody>
               ${recent_enrichments.map(e => `
                 <tr>
-                  <td><a href="https://townsquaremedia.lightning.force.com/lightning/r/Lead/${e.salesforce_lead_id}/view" target="_blank" style="font-family: monospace; font-size: 11px;">${e.salesforce_lead_id}</a></td>
+                  <td><a href="https://townsquare.lightning.force.com/lightning/r/Lead/${e.salesforce_lead_id}/view" target="_blank" style="font-family: monospace; font-size: 11px;">${e.salesforce_lead_id}</a></td>
                   <td><span class="badge ${e.enrichment_status === 'completed' ? 'success' : 'warning'}">${e.enrichment_status}</span></td>
                   <td><strong>${e.fit_score ?? '-'}</strong></td>
                   <td><strong>${e.score !== null && e.score !== undefined ? e.score : '-'}</strong></td>
@@ -2182,7 +2182,7 @@
                 <tr>
                   <td><input type="checkbox" class="lead-checkbox" data-id="${lead.id}" onchange="toggleLeadSelection('${lead.id}')"></td>
                   <td><strong>${lead.company || '-'}</strong></td>
-                  <td><a href="https://townsquaremedia.lightning.force.com/lightning/r/Lead/${lead.id}/view" target="_blank" style="font-family: monospace; font-size: 11px;">${lead.id}</a></td>
+                  <td><a href="https://townsquare.lightning.force.com/lightning/r/Lead/${lead.id}/view" target="_blank" style="font-family: monospace; font-size: 11px;">${lead.id}</a></td>
                   <td>${lead.website ? `<a href="${lead.website}" target="_blank">${truncate(lead.website, 25)}</a>` : '-'}</td>
                   <td>${lead.phone || '-'}</td>
                   <td>${[lead.city, lead.state].filter(Boolean).join(', ') || '-'}</td>

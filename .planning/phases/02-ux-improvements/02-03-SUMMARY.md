@@ -26,7 +26,7 @@ tech-stack:
     - Clickable Salesforce Lead ID links in dashboard tables
     - Client-side filtering for invalid/unknown data
 patterns-established:
-  - Lead ID link format: `https://townsquaremedia.lightning.force.com/lightning/r/Lead/{ID}/view`
+  - Lead ID link format: `https://townsquare.lightning.force.com/lightning/r/Lead/{ID}/view`
   - Case-insensitive string filtering with null checks
 next-phase-readiness:
   - Phase 2 complete - all UX improvements implemented
