@@ -94,11 +94,31 @@ export interface WebsiteTechData {
   marketing_tools_detected: string[];
 }
 
+// Website validation result from WebsiteValidatorService
+export interface WebsiteValidationResult {
+  url: string;
+  exists: boolean;
+  status_code?: number;
+  final_url?: string; // After redirects
+  redirected: boolean;
+  response_time_ms?: number;
+  error?: string;
+  domain_age?: {
+    created_date?: string;
+    age_years?: number;
+    age_days?: number;
+    registrar?: string;
+    updated_date?: string;
+    expiry_date?: string;
+  };
+}
+
 export interface EnrichmentData {
   google_places?: GooglePlacesData;
   clay?: ClayData; // Legacy - kept for backwards compatibility
   pdl?: PDLCompanyData; // People Data Labs Company Enrichment
   website_tech?: WebsiteTechData;
+  website_validation?: WebsiteValidationResult; // Website validation with domain age
   marketing_spend?: number; // Monthly marketing spend from landing page form
 }
 
@@ -186,6 +206,7 @@ export interface LeadEnrichmentRecord {
   clay_data?: ClayData; // Legacy
   pdl_data?: PDLCompanyData; // People Data Labs
   website_tech_data?: WebsiteTechData;
+  website_validation_data?: WebsiteValidationResult; // Website validation with domain age
   fit_score?: number;
   score_breakdown?: ScoreBreakdown;
   // Salesforce-aligned fields

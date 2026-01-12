@@ -64,8 +64,8 @@ export function mapToSalesforceFields(
   const business_license = null;
 
   // Spending_on_Marketing__c - True if domain age > 2 years AND has advertising pixels
-  // Use PDL years_in_business for domain age check, fallback to Clay
-  const spending_on_marketing = determineSpendingOnMarketing(pdl, clay, websiteTech);
+  // Priority: PDL years_in_business > Domain Age > Clay years_in_business
+  const spending_on_marketing = determineSpendingOnMarketing(pdl, clay, websiteTech, enrichmentData.website_validation);
 
   return {
     has_website,
@@ -413,11 +413,13 @@ export function mapGMBTypesToVertical(gmbTypes?: string[]): LeadVerticalPicklist
 function determineSpendingOnMarketing(
   pdl?: EnrichmentData['pdl'],
   clay?: EnrichmentData['clay'],
-  websiteTech?: EnrichmentData['website_tech']
+  websiteTech?: EnrichmentData['website_tech'],
+  websiteValidation?: EnrichmentData['website_validation']
 ): boolean {
   // Check if business has been around for more than 2 years
-  // Priority: PDL years_in_business > Clay years_in_business
-  const yearsInBusiness = pdl?.years_in_business ?? clay?.years_in_business ?? 0;
+  // Priority: PDL years_in_business > Domain Age > Clay years_in_business
+  const domainAgeYears = websiteValidation?.domain_age?.age_years;
+  const yearsInBusiness = pdl?.years_in_business ?? domainAgeYears ?? clay?.years_in_business ?? 0;
   const domainAgeOver2Years = yearsInBusiness > 2;
 
   // Check if has advertising pixels

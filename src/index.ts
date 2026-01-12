@@ -10,6 +10,7 @@ import path from 'path';
 import { GooglePlacesService } from './services/googlePlaces';
 import { PeopleDataLabsService } from './services/peopleDataLabs';
 import { WebsiteTechService } from './services/websiteTech';
+import { WebsiteValidatorService, WebsiteValidationResult } from './services/websiteValidator';
 import { calculateFitScore } from './services/fitScore';
 import { SalesforceService } from './services/salesforce';
 import { DashboardStatsService } from './services/dashboardStats';
@@ -92,6 +93,35 @@ const pool = new Pool({
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
 });
+
+/**
+ * Get cached website validation from database
+ * Returns cached result if found and less than 30 days old
+ */
+async function getCachedWebsiteValidation(
+  url: string
+): Promise<WebsiteValidationResult | null> {
+  try {
+    const result = await pool.query(
+      `SELECT website_validation_data
+       FROM lead_enrichments
+       WHERE website_validation_data->>'url' = $1
+       AND updated_at > NOW() - INTERVAL '30 days'
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [url]
+    );
+
+    if (result.rows.length > 0 && result.rows[0].website_validation_data) {
+      return result.rows[0].website_validation_data as WebsiteValidationResult;
+    }
+
+    return null;
+  } catch (error) {
+    logger.warn('Failed to get cached website validation', { url, error });
+    return null;
+  }
+}
 
 // Validation schema for /enrich endpoint (Workato integration)
 const EnrichRequestSchema = z.object({
@@ -483,7 +513,38 @@ app.post('/api/enrich-by-id', async (req, res) => {
       // Use GMB-filled website for tech detection if original is missing
       const websiteForTech = lead.Website || filledFromGMB.website;
 
-      // Step 2: Website tech detection (use original or GMB-filled website)
+      // Step 2a: Website validation (with caching)
+      if (websiteForTech) {
+        try {
+          // Check cache first
+          const cachedValidation = await getCachedWebsiteValidation(websiteForTech);
+
+          if (cachedValidation) {
+            logger.info('Using cached website validation', { requestId, website: websiteForTech });
+            enrichmentData.website_validation = cachedValidation;
+          } else {
+            logger.info('Validating website URL', { requestId, website: websiteForTech });
+            const validator = new WebsiteValidatorService();
+            const websiteValidation = await validator.validateWebsite(websiteForTech, true);
+            enrichmentData.website_validation = websiteValidation;
+
+            if (!websiteValidation.exists) {
+              logger.warn('Website validation failed', {
+                requestId,
+                website: websiteForTech,
+                error: websiteValidation.error
+              });
+            }
+          }
+        } catch (error) {
+          logger.warn('Website validation error', {
+            requestId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      // Step 2b: Website tech detection (use original or GMB-filled website, always attempt even if validation failed)
       if (websiteForTech) {
         try {
           logger.info('Detecting website tech', { requestId, website: websiteForTech });
@@ -1483,7 +1544,38 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
       // Use GMB-filled website for tech detection if original is missing
       const websiteForTech = payload.website || filledFromGMB.website;
 
-      // Step 2: Website tech detection (use original or GMB-filled website)
+      // Step 2a: Website validation (with caching)
+      if (websiteForTech) {
+        try {
+          // Check cache first
+          const cachedValidation = await getCachedWebsiteValidation(websiteForTech);
+
+          if (cachedValidation) {
+            logger.info('Using cached website validation', { requestId, website: websiteForTech });
+            enrichmentData.website_validation = cachedValidation;
+          } else {
+            logger.info('Validating website URL', { requestId, website: websiteForTech });
+            const validator = new WebsiteValidatorService();
+            const websiteValidation = await validator.validateWebsite(websiteForTech, true);
+            enrichmentData.website_validation = websiteValidation;
+
+            if (!websiteValidation.exists) {
+              logger.warn('Website validation failed', {
+                requestId,
+                website: websiteForTech,
+                error: websiteValidation.error
+              });
+            }
+          }
+        } catch (error) {
+          logger.warn('Website validation error', {
+            requestId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      // Step 2b: Website tech detection (use original or GMB-filled website, always attempt even if validation failed)
       if (websiteForTech) {
         try {
           logger.info('Detecting website tech', { requestId, website: websiteForTech });
@@ -1540,12 +1632,12 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
         await pool.query(
           `INSERT INTO lead_enrichments (
             salesforce_lead_id, job_id, enrichment_status,
-            google_places_data, pdl_data, website_tech_data,
+            google_places_data, pdl_data, website_tech_data, website_validation_data,
             fit_score, score, score_breakdown,
             has_website, number_of_employees, number_of_gbp_reviews,
             number_of_years_in_business, has_gmb, gmb_url,
             location_type, business_license, spending_on_marketing
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
           [
             payload.salesforce_lead_id,
             requestId,
@@ -1553,6 +1645,7 @@ app.post('/enrich', authenticateApiKey, async (req, res) => {
             enrichmentData.google_places ? JSON.stringify(enrichmentData.google_places) : null,
             enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
             enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
+            enrichmentData.website_validation ? JSON.stringify(enrichmentData.website_validation) : null,
             fitScoreResult.fit_score,
             null, // score is null here since we don't have lead_source in payload
             JSON.stringify(fitScoreResult.score_breakdown),
@@ -1764,7 +1857,38 @@ app.post('/api/workato/enrich', authenticateApiKey, async (req, res) => {
       // Use GMB-filled website for tech detection if original is missing
       const websiteForTech = lead.Website || filledFromGMB.website;
 
-      // Step 2: Website tech detection (use original or GMB-filled website)
+      // Step 2a: Website validation (with caching)
+      if (websiteForTech) {
+        try {
+          // Check cache first
+          const cachedValidation = await getCachedWebsiteValidation(websiteForTech);
+
+          if (cachedValidation) {
+            logger.info('Using cached website validation', { requestId, website: websiteForTech });
+            enrichmentData.website_validation = cachedValidation;
+          } else {
+            logger.info('Validating website URL', { requestId, website: websiteForTech });
+            const validator = new WebsiteValidatorService();
+            const websiteValidation = await validator.validateWebsite(websiteForTech, true);
+            enrichmentData.website_validation = websiteValidation;
+
+            if (!websiteValidation.exists) {
+              logger.warn('Website validation failed', {
+                requestId,
+                website: websiteForTech,
+                error: websiteValidation.error
+              });
+            }
+          }
+        } catch (error) {
+          logger.warn('Website validation error', {
+            requestId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      // Step 2b: Website tech detection (use original or GMB-filled website, always attempt even if validation failed)
       if (websiteForTech) {
         try {
           logger.info('Detecting website tech', { requestId, website: websiteForTech });
@@ -1848,12 +1972,12 @@ app.post('/api/workato/enrich', authenticateApiKey, async (req, res) => {
         await pool.query(
           `INSERT INTO lead_enrichments (
             salesforce_lead_id, job_id, enrichment_status,
-            google_places_data, pdl_data, website_tech_data,
+            google_places_data, pdl_data, website_tech_data, website_validation_data,
             fit_score, score, score_breakdown, salesforce_updated, salesforce_updated_at,
             has_website, number_of_employees, number_of_gbp_reviews,
             number_of_years_in_business, has_gmb, gmb_url,
             location_type, business_license, spending_on_marketing
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
           [
             salesforce_lead_id,
             requestId,
@@ -1861,6 +1985,7 @@ app.post('/api/workato/enrich', authenticateApiKey, async (req, res) => {
             enrichmentData.google_places ? JSON.stringify(enrichmentData.google_places) : null,
             enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
             enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
+            enrichmentData.website_validation ? JSON.stringify(enrichmentData.website_validation) : null,
             fitScoreResult.fit_score,
             score,
             JSON.stringify(fitScoreResult.score_breakdown),

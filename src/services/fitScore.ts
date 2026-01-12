@@ -107,12 +107,16 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
   }
 
   // Website scoring:
-  // +15 if custom domain (not GMB/Google URL, not subdomain)
-  // +5 if GMB/Google URL
-  // +0 if subdomain or no website
+  // +15 if custom domain (not GMB/Google URL, not subdomain) AND URL is valid
+  // +5 if GMB/Google URL AND URL is valid
+  // +0 if subdomain, invalid URL, or no website
   const websiteUrl = googlePlaces?.gmb_website || pdl?.website_confirmed;
+  const websiteValidation = enrichmentData.website_validation;
 
-  if (websiteUrl) {
+  // Check if website validation failed (if validation was performed)
+  const websiteExists = websiteValidation ? websiteValidation.exists : true; // Assume exists if not validated
+
+  if (websiteUrl && websiteExists) {
     const isGoogleUrl = isGoogleOrGmbUrl(websiteUrl);
     const isSubdomainUrl = isSubdomain(websiteUrl);
 
@@ -123,15 +127,18 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     } else {
       breakdown.solvency_score.website = 15; // Custom domain
     }
-  } else if (websiteTech?.has_meta_pixel !== undefined) {
-    // If we have website tech data, it means we successfully scanned a website
+  } else if (websiteTech?.has_meta_pixel !== undefined && websiteExists) {
+    // If we have website tech data and URL is valid, it means we successfully scanned a website
     // This implies a real website exists (not GMB/subdomain)
     breakdown.solvency_score.website = 15;
+  } else if (!websiteExists) {
+    // Invalid URL - explicitly set to 0
+    breakdown.solvency_score.website = 0;
   }
 
-  // Reviews: +0 (<15), +20 (15-29), +25 (≥30)
+  // Reviews: +0 (<15), +20 (15-54), +25 (≥55)
   const reviewCount = googlePlaces?.gmb_review_count ?? 0;
-  if (reviewCount >= 30) {
+  if (reviewCount >= 55) {
     breakdown.solvency_score.reviews = 25;
   } else if (reviewCount >= 15) {
     breakdown.solvency_score.reviews = 20;
@@ -140,8 +147,9 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
   }
 
   // Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
-  // Priority: PDL > Clay (legacy)
-  const yearsInBusiness = pdl?.years_in_business ?? clay?.years_in_business ?? 0;
+  // Priority: PDL > Domain Age > Clay (legacy)
+  const domainAgeYears = enrichmentData.website_validation?.domain_age?.age_years;
+  const yearsInBusiness = pdl?.years_in_business ?? domainAgeYears ?? clay?.years_in_business ?? 0;
   if (yearsInBusiness >= 8) {
     breakdown.solvency_score.years_in_business = 15;
   } else if (yearsInBusiness >= 4) {
