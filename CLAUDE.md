@@ -5,8 +5,9 @@ Automated lead enrichment and scoring system that enriches prospects via Workato
 ## Architecture
 
 - **API Service**: Express.js REST API (port 4900) - receives webhooks from Workato, performs synchronous enrichment
-- **Database**: PostgreSQL (lead_enrichments table for audit trail)
+- **Database**: PostgreSQL (leads and lead_enrichments tables for audit trail)
 - **Salesforce**: Direct Lead updates via jsforce (OAuth 2.0)
+- **Dashboard**: Internal web dashboard at `/dashboard` for monitoring and manual operations
 - **Integration**: Workato handles LanderLab → Salesforce Lead creation, calls TSI for enrichment
 
 ## Data Flow
@@ -53,34 +54,47 @@ npm start            # Run production build
 src/
   index.ts                      # Express app, routes, middleware
   types/
-    lead.ts                     # TypeScript interfaces
+    lead.ts                     # TypeScript interfaces (EnrichmentData, FitScoreResult, etc.)
   services/
-    googlePlaces.ts             # Google Places API integration
-    peopleDataLabs.ts           # PDL Company Enrichment API
-    websiteTech.ts              # Puppeteer-based tech stack detection
-    fitScore.ts                 # Score calculation algorithm
-    salesforce.ts               # Salesforce OAuth + Lead updates
-    salesforceFieldMapper.ts    # Maps enrichment data → SF fields
-    dashboardStats.ts           # Dashboard statistics
+    googlePlaces.ts             # Google Places API integration (GMB matching)
+    peopleDataLabs.ts           # PDL Company Enrichment API (employees, years in business)
+    websiteTech.ts              # Puppeteer-based tech stack detection (pixels, marketing tools)
+    fitScore.ts                 # Fit Score calculation algorithm (0-100)
+    scoreMapper.ts              # Maps Fit Score (0-100) → Score__c (0-5) for Facebook/TikTok/Google
+    salesforce.ts               # Salesforce OAuth + Lead updates (jsforce)
+    salesforceFieldMapper.ts    # Maps enrichment data → SF custom fields + GMB field filling
+    dashboardStats.ts           # Dashboard statistics (unenriched leads, KPIs)
+    clay.ts                     # Legacy Clay integration (kept for backwards compatibility)
   utils/
-    logger.ts                   # Winston logger configuration
+    logger.ts                   # Winston logger configuration (in-memory log buffer)
     retry.ts                    # Retry logic with exponential backoff
     circuitBreaker.ts           # Circuit breaker for external APIs
+    validation.ts               # Salesforce ID validation (SOQL injection prevention)
 migrations/
-  001_create_leads_table.sql
-  002_create_enrichments_table.sql
-  003_salesforce_aligned_fields.sql
-  004_add_utm_and_address_fields.sql
-  005_drop_fit_tier_column.sql
-  006_fix_enrichments_lead_id.sql
-  007_replace_clay_with_pdl.sql
+  001_create_leads_table.sql              # Initial leads table
+  002_create_enrichments_table.sql        # Initial enrichments table
+  003_salesforce_aligned_fields.sql       # Add SF-aligned fields (has_website, number_of_employees, etc.)
+  004_add_utm_and_address_fields.sql      # Add UTM tracking and address fields
+  005_drop_fit_tier_column.sql            # Remove fit_tier (replaced by score calculation)
+  006_fix_enrichments_lead_id.sql         # Fix lead_id reference (use salesforce_lead_id directly)
+  007_replace_clay_with_pdl.sql           # Add pdl_data column, migrate from clay_data
+  008_add_score_column.sql                # Add score column (0-5) for Score__c mapping
+public/
+  index.html                    # Internal dashboard (enrichment monitoring, batch operations)
+utility-scripts/                # Standalone utility scripts (analysis, import/export, queries)
+  analysis/                     # Lead analysis scripts
+  import-export/                # Salesforce import/export scripts
+  queries/                      # Database query scripts
+scripts/                        # TypeScript utility scripts
 ```
 
 ## API Endpoints
 
-### POST /enrich (X-API-Key required)
+### Production Endpoints (Workato Integration)
 
-Synchronous enrichment endpoint for Workato.
+#### POST /enrich (X-API-Key required)
+
+Synchronous enrichment endpoint for Workato. Receives lead data from Workato, enriches it, and returns Salesforce field mappings for Workato to update the Lead record.
 
 **Request:**
 ```json
@@ -120,17 +134,85 @@ Synchronous enrichment endpoint for Workato.
 }
 ```
 
-### GET /health
+#### POST /api/workato/enrich (X-API-Key required)
 
-Health check (no auth).
+Automatic enrichment endpoint for Workato. Fetches lead from Salesforce by ID, enriches it, and updates Salesforce directly. This endpoint is fully automated - Workato just needs to send the Salesforce Lead ID.
 
-### GET /api/lead/:salesforceLeadId (X-API-Key required)
+### Dashboard Endpoints (Internal - No Auth Required)
 
-Retrieve enrichment data by Salesforce Lead ID.
+#### GET /
 
-### POST /api/workato/enrich (X-API-Key required)
+Redirects to `/dashboard`
 
-Automatic enrichment endpoint for Workato. Fetches lead from Salesforce by ID, enriches it, and updates Salesforce directly.
+#### GET /dashboard
+
+Serves internal dashboard HTML (static files from `public/`)
+
+#### GET /api/lead/:salesforceLeadId
+
+Retrieve enrichment data by Salesforce Lead ID (from database and Salesforce)
+
+#### POST /api/enrich-by-id
+
+Manual enrichment by Salesforce Lead ID. Optional `update_salesforce` parameter (default: true)
+
+#### GET /api/dashboard/stats
+
+Get dashboard statistics for date range (`startDate`, `endDate` query params)
+
+#### GET /api/dashboard/unenriched
+
+Get paginated list of unenriched leads from Salesforce (`limit`, `offset`, `startDate`, `endDate`, `leadSource` query params)
+
+#### GET /api/dashboard/enrichment-kpis
+
+Get enrichment KPIs for selected period (`period=today|yesterday|this_week|last_week|this_month|last_month`, `limit`, `offset` query params)
+
+#### POST /api/dashboard/enrich-batch
+
+Batch enrich multiple leads (parallel processing, max 50 leads, configurable concurrency 1-10)
+
+**Request:**
+```json
+{
+  "lead_ids": ["00Q...", "00Q..."],
+  "concurrency": 5
+}
+```
+
+#### POST /api/dashboard/enrich-batch-gmb-only
+
+Fast GMB-only batch enrichment (skips PDL and website tech, max 100 leads, concurrency 1-20)
+
+#### POST /api/dashboard/backfill-fit-scores
+
+Backfill fit scores for leads with GMB but no fit score (Facebook leads only)
+
+### Setup & Monitoring Endpoints (X-API-Key required)
+
+#### GET /health
+
+Health check (no auth required)
+
+#### GET /api/setup/status
+
+System status: database connection, Salesforce connection, configured services
+
+#### GET /api/setup/logs
+
+Recent application logs (in-memory buffer, max 500 entries, `limit`, `level` query params)
+
+#### POST /api/setup/test-database
+
+Test database connection and get database info
+
+#### GET /api/setup/database-stats
+
+Database statistics: enrichment counts, score distribution, recent activity
+
+#### GET /enrichment/:salesforceLeadId
+
+Retrieve enrichment record from database by Salesforce Lead ID (legacy endpoint)
 
 **Request:**
 ```json
@@ -214,18 +296,30 @@ Returns enrichment KPIs for today, yesterday, this week, and last week.
 
 ## Fit Score Algorithm
 
-**Solvency (0-85 points):**
-- Website: +10
-- Google reviews: 0-25 (scaled by count)
-- Years in business: 0-20
-- Employees: 0-20
-- Physical location: +10
+**Solvency Score (0-90 points):**
+- GMB Match: +5 if Google Business Profile found (place_id exists)
+- Website: +15 (custom domain), +5 (GMB/Google URL), +0 (subdomain/social)
+- Reviews: +0 (<15), +20 (15-29), +25 (≥30)
+- Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
+- Employees: +0 (<2), +5 (2-4), +15 (>5)
+- Physical location: +20 (storefront/office), +10 (service-area business), +0 (residential/unknown)
+- Marketing spend: +0 ($0), +5 (<$500), +10 (≥$500)
 
-**Pixel Bonus (0-15 points):**
+**Pixel Bonus (0-10 points):**
 - 1 pixel detected: +5
 - 2+ pixels detected: +10
 
-**Tiers:** 0-39 Disqualified, 40-59 MQL, 60-79 High Fit, 80-100 Premium
+**Final Score:** `clamp(SolvencyScore + PixelBonus, 0, 100)`
+
+**Score__c Mapping (0-5, for Facebook/TikTok/Google leads only):**
+- 0: Score 0 (Disqualified - no business verification)
+- 1-39: Score 1 (Low Quality)
+- 40-59: Score 2 (MQL)
+- 60-79: Score 3 (Good MQL)
+- 80-99: Score 4 (High Quality)
+- 100: Score 5 (Premium)
+
+**Note:** Score__c is only calculated and updated for leads with `LeadSource` = 'Facebook', 'TikTok', or 'Google'. Other lead sources do not receive automatic Score__c updates.
 
 ## Environment Variables
 
@@ -258,10 +352,23 @@ LOG_LEVEL                 # info | debug | error
 - **Circuit breaker**: Prevents cascading failures from flaky services (see `utils/circuitBreaker.ts`)
 - **Graceful degradation**: Database unavailable → enrichment still works, just not persisted
 - **Field mapping**: `salesforceFieldMapper.ts` centralizes all SF field name mappings
+- **GMB field filling**: Automatically fills missing lead fields (website, address) from Google Business Profile data, with address overwrite protection for high-confidence matches
+- **SOQL injection prevention**: All Salesforce ID inputs are validated using `utils/validation.ts` before use in queries
+- **In-memory log buffer**: Recent logs (max 500 entries) are kept in memory for `/api/setup/logs` endpoint
+- **Batch processing**: Parallel enrichment with configurable concurrency limits to prevent API overload
 
 ## Deployment
 
 Deployed to Hostinger VPS (API service + PostgreSQL).
+
+## Utility Scripts
+
+Standalone utility scripts for analysis, import/export, and database queries are located in `utility-scripts/`:
+- **analysis/**: Lead analysis and comparison scripts
+- **import-export/**: Salesforce import/export scripts
+- **queries/**: Database query and lookup scripts
+
+TypeScript utility scripts for Salesforce operations are in `scripts/`.
 
 ## Workato Integration
 

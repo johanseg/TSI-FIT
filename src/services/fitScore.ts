@@ -56,9 +56,9 @@ function isSubdomain(url: string | undefined): boolean {
  * - Website Tech: pixel detection for bonus points
  *
  * Solvency Score (0-100):
- * - GMB Match: +10 if GMB found (place_id exists)
+ * - GMB Match: +5 if GMB found (place_id exists)
  * - Website: +15 if custom domain, +5 if GMB/Google URL, +0 if subdomain/social
- * - Reviews: +0 (<5), +10 (5-14), +20 (15-29), +25 (≥30)
+ * - Reviews: +0 (<15), +20 (15-29), +25 (≥30)
  * - Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
  * - Employees: +0 (<2), +5 (2-4), +15 (>5)
  * - Physical location: +20 storefront/office, +10 service-area business
@@ -95,15 +95,15 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     final_score: 0,
   };
 
-  // Calculate Solvency Score (0-95)
+  // Calculate Solvency Score (0-90)
   const googlePlaces = enrichmentData.google_places;
   const pdl = enrichmentData.pdl;
   const clay = enrichmentData.clay; // Legacy fallback
   const websiteTech = enrichmentData.website_tech;
 
-  // GMB Match: +10 if place_id exists
+  // GMB Match: +5 if place_id exists
   if (googlePlaces?.place_id) {
-    breakdown.solvency_score.gmb_match = 10;
+    breakdown.solvency_score.gmb_match = 5;
   }
 
   // Website scoring:
@@ -129,14 +129,12 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     breakdown.solvency_score.website = 15;
   }
 
-  // Reviews: +0 (<5), +10 (5-14), +20 (15-29), +25 (≥30)
+  // Reviews: +0 (<15), +20 (15-29), +25 (≥30)
   const reviewCount = googlePlaces?.gmb_review_count ?? 0;
   if (reviewCount >= 30) {
     breakdown.solvency_score.reviews = 25;
   } else if (reviewCount >= 15) {
     breakdown.solvency_score.reviews = 20;
-  } else if (reviewCount >= 5) {
-    breakdown.solvency_score.reviews = 10;
   } else {
     breakdown.solvency_score.reviews = 0;
   }
