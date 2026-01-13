@@ -136,75 +136,46 @@ export function calculateFitScore(enrichmentData: EnrichmentData): FitScoreResul
     breakdown.solvency_score.website = 0;
   }
 
-  // Reviews: +0 (<15), +20 (15-54), +25 (≥55)
+  // Reviews: +0 (<15), +20 (15-54), +25 (>=55)
   const reviewCount = googlePlaces?.gmb_review_count ?? 0;
-  if (reviewCount >= 55) {
-    breakdown.solvency_score.reviews = 25;
-  } else if (reviewCount >= 15) {
-    breakdown.solvency_score.reviews = 20;
-  } else {
-    breakdown.solvency_score.reviews = 0;
-  }
+  if (reviewCount >= 55) breakdown.solvency_score.reviews = 25;
+  else if (reviewCount >= 15) breakdown.solvency_score.reviews = 20;
 
-  // Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
+  // Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (>=8)
   // Priority: PDL > Domain Age > Clay (legacy)
   const domainAgeYears = enrichmentData.website_validation?.domain_age?.age_years;
   const yearsInBusiness = pdl?.years_in_business ?? domainAgeYears ?? clay?.years_in_business ?? 0;
-  if (yearsInBusiness >= 8) {
-    breakdown.solvency_score.years_in_business = 15;
-  } else if (yearsInBusiness >= 4) {
-    breakdown.solvency_score.years_in_business = 10;
-  } else if (yearsInBusiness >= 2) {
-    breakdown.solvency_score.years_in_business = 5;
-  } else {
-    breakdown.solvency_score.years_in_business = 0;
-  }
+  if (yearsInBusiness >= 8) breakdown.solvency_score.years_in_business = 15;
+  else if (yearsInBusiness >= 4) breakdown.solvency_score.years_in_business = 10;
+  else if (yearsInBusiness >= 2) breakdown.solvency_score.years_in_business = 5;
 
   // Employees: +0 (<2), +5 (2-4), +15 (>5)
   // Priority: PDL employee_count > PDL size_range (parsed) > Clay (legacy)
-  let employees = 0;
-  if (pdl?.employee_count != null && pdl.employee_count > 0) {
-    // Use exact employee count if available and valid
-    employees = pdl.employee_count;
-  } else if (pdl?.size_range) {
-    // Parse employee count from size range (e.g., "1-10" → 6, "11-50" → 30)
-    employees = PeopleDataLabsService.parseEmployeeCountFromSize(pdl.size_range) ?? 0;
-  } else if (clay?.employee_estimate != null && clay.employee_estimate > 0) {
-    // Legacy Clay fallback
-    employees = clay.employee_estimate;
-  }
+  const employees = (pdl?.employee_count != null && pdl.employee_count > 0)
+    ? pdl.employee_count
+    : (pdl?.size_range ? PeopleDataLabsService.parseEmployeeCountFromSize(pdl.size_range) ?? 0 : 0)
+      || (clay?.employee_estimate ?? 0);
 
-  if (employees > 5) {
-    breakdown.solvency_score.employees = 15;
-  } else if (employees >= 2) {
-    breakdown.solvency_score.employees = 5;
-  } else {
-    breakdown.solvency_score.employees = 0;
-  }
+  if (employees > 5) breakdown.solvency_score.employees = 15;
+  else if (employees >= 2) breakdown.solvency_score.employees = 5;
 
   // Physical location bonus based on location classification:
-  // - Storefront/Office: +10 (has real commercial location with customer foot traffic or dedicated office)
-  // - Service Area Business: +5 (verified business via GMB, operates from home/mobile)
-  // - Residential/Unknown: +0 (not a valid business location)
+  // - Storefront/Office: +10 (commercial location)
+  // - Service Area Business: +5 (verified GMB, operates from home/mobile)
+  // - Residential/Unknown: +0
   if (googlePlaces) {
     const classification = GooglePlacesService.getLocationClassification(googlePlaces);
     if (classification === 'storefront' || classification === 'office') {
       breakdown.solvency_score.physical_location = 10;
     } else if (classification === 'service_area') {
-      // Verified service-area business (home-based contractor with GMB presence)
       breakdown.solvency_score.physical_location = 5;
     }
   }
 
-  // Marketing spend: +0 ($0), +5 (<$500), +10 (≥$500)
+  // Marketing spend: +0 ($0), +5 (<$500), +10 (>=$500)
   const marketingSpend = enrichmentData.marketing_spend ?? 0;
-  if (marketingSpend >= 500) {
-    breakdown.solvency_score.marketing_spend = 10;
-  } else if (marketingSpend > 0) {
-    breakdown.solvency_score.marketing_spend = 5;
-  } else {
-    breakdown.solvency_score.marketing_spend = 0;
-  }
+  if (marketingSpend >= 500) breakdown.solvency_score.marketing_spend = 10;
+  else if (marketingSpend > 0) breakdown.solvency_score.marketing_spend = 5;
 
   breakdown.solvency_score.total =
     breakdown.solvency_score.gmb_match +

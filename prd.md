@@ -1,9 +1,12 @@
 📘 PRD — TSI Lead Fit Scoring & Retention Enrichment Engine (MVP)
 
 Product Name: TSI Fit Score Engine
-Version: MVP v1.0
+Version: v1.2 (Production)
 Owner: Growth / Acquisition (Townsquare Interactive)
+Status: ✅ **DEPLOYED & OPERATIONAL**
 Primary Goal: Improve customer retention and LTV by pre-qualifying leads before sales using automated data enrichment and scoring, and passing those signals to Salesforce and ad platforms.
+
+**Latest Update (Jan 2026)**: Website validation with domain age lookup now live. Invalid URLs receive 0 points. Domain age used as fallback for years_in_business when PDL data unavailable.
 
 ⸻
 
@@ -45,15 +48,17 @@ Success Metrics (Not Vanity)
 
 3. MVP Scope (Strict)
 
-IN SCOPE (v1)
-	•	Automated enrichment using:
-	•	Google Places / Maps API
-	•	Website tech detection
-	•	Clay enrichment (employees, revenue where available)
-	•	Deterministic Fit Score calculation
-	•	Salesforce write-back
-	•	Synchronous scoring (<10s) OR async with callback
-	•	Logging + audit trail
+COMPLETED & IN PRODUCTION
+	•	✅ Automated enrichment using:
+	•	✅ Google Places / Maps API (GMB matching, reviews, ratings, location)
+	•	✅ Website URL validation + WHOIS domain age lookup (30-day cache)
+	•	✅ Website tech detection (Puppeteer-based pixel scanning)
+	•	✅ People Data Labs (PDL) enrichment (employees, years in business, revenue, industry)
+	•	✅ Deterministic Fit Score calculation (0-100)
+	•	✅ Salesforce direct write-back (custom fields + Score__c mapping)
+	•	✅ Synchronous scoring (~5-8 seconds per lead)
+	•	✅ PostgreSQL audit trail with JSONB enrichment data
+	•	✅ Internal dashboard for monitoring and batch operations
 
 OUT OF SCOPE (for MVP)
 	•	n8n orchestration (comes later)
@@ -69,62 +74,132 @@ Flow:
 
 LanderLab Form → Workato (webhook)
              → Salesforce (create Lead)
-             → TSI API /enrich (Hostinger VPS)
-             → Enrichment (Google + Website + Clay)
-             → Fit Score Calculation
+             → TSI API /enrich (Railway)
+             → Enrichment (Google Places + Website Validation + Website Tech + PDL)
+             → Fit Score Calculation (0-100)
              → Return to Workato
              → Workato updates Salesforce Lead
              → (Optional) Stape event decision
 
-Hosting: Hostinger VPS
+Hosting: Railway (Production)
 Services:
-	•	Web API (port 4900) - synchronous enrichment
-	•	PostgreSQL DB - audit trail
+	•	Web API (port 4900) - synchronous enrichment via Express.js
+	•	PostgreSQL DB - audit trail with JSONB columns for enrichment data
+	•	Internal Dashboard - /dashboard endpoint for monitoring and batch operations
+Deployment: Automatic via GitHub push to Railway
 
 ⸻
 
-5. Data Enrichment Signals (MVP)
+5. Data Enrichment Signals (Production)
 
-Positive Retention Signals (Add Points)
+Data Sources
 
-Signal	Why
-Business exists on Google Places	Real business
-≥ 15 Google reviews	Operational maturity
-Years in business ≥ 2	Survivability
-Employees ≥ 3	Payroll + solvency
-Physical location	Non-fly-by-night
-Website present	Baseline legitimacy
+| Source | Data Provided | Usage |
+|--------|--------------|-------|
+| **Google Places API** | GMB match, reviews count, rating, address, business type | Solvency scoring, location validation |
+| **Website Validator** | URL existence, domain age (WHOIS), response time | Website scoring, years in business fallback |
+| **Website Tech Scanner** | Meta Pixel, GA4, Google Ads, TikTok, HubSpot detection | Pixel bonus scoring |
+| **People Data Labs (PDL)** | Employee count, years in business, revenue, industry, NAICS | Solvency scoring (primary source) |
 
-Negative Sophistication Signals (Subtract Points)
+Positive Solvency Signals (Solvency Score: 0-85 points)
 
-(Weighted at ~50% of original values)
+| Signal | Points | Why |
+|--------|--------|-----|
+| GMB Match (Google Business Profile found) | +5 | Real, verifiable business |
+| Website (valid custom domain) | +15 | Professional presence |
+| Website (GMB/Google URL) | +5 | Basic online presence |
+| Website (subdomain/social) | +0 | Not professional |
+| Website (invalid URL, validation failed) | +0 | Non-functional or fake |
+| Google Reviews ≥55 | +25 | High operational maturity |
+| Google Reviews 15-54 | +20 | Moderate maturity |
+| Google Reviews <15 | +0 | New or inactive |
+| Years in business ≥8 | +15 | Long-term survivability |
+| Years in business 4-7 | +10 | Established |
+| Years in business 2-3 | +5 | Early stage but viable |
+| Years in business <2 | +0 | High-risk startup |
+| Employees >5 | +15 | Payroll + solvency |
+| Employees 2-4 | +5 | Small team |
+| Employees <2 | +0 | Solo operator |
+| Physical location (storefront/office) | +10 | Permanent establishment |
+| Physical location (service-area business) | +5 | Legitimate operation |
+| Physical location (residential/unknown) | +0 | Questionable legitimacy |
 
-Signal	Points	Why
-Meta Pixel detected	−7	Already running ads / agency risk
-GA4 / Google Ads tag	−5	Prior acquisition experience
-Multiple ad pixels	−10	Highly optimized, harder to satisfy
-Marketing automation (HubSpot, etc.)	−5	Sophisticated buyer
+Pixel Bonus (0-10 points)
 
-Design Principle:
-Penalize over-sophistication, not competence.
-We want solvent but under-optimized businesses.
+**Design Shift**: Changed from penalty to bonus. Pixels now indicate digital maturity and spending capability.
+
+| Signal | Points | Why |
+|--------|--------|-----|
+| 1 pixel detected (Meta, GA4, Google Ads, TikTok) | +5 | Active digital presence |
+| 2+ pixels detected | +10 | Sophisticated digital operations |
+| No pixels detected | +0 | No digital marketing |
+
+Data Fallback Priority
+
+**Years in Business**:
+1. PDL `years_in_business` (primary)
+2. Website domain age from WHOIS (fallback)
+3. Clay `years_in_business` (legacy)
+4. Default: 0
+
+Website Validation Caching:
+- 30-day TTL in PostgreSQL (website_validation_data JSONB column)
+- Indexed on URL for fast cache lookups
+- Prevents repeated WHOIS lookups (2-5 seconds per domain)
 
 ⸻
 
-6. Fit Score Model (v1)
+6. Fit Score Model (v1.2 - Production)
 
 Score Range: 0–100
-Structure:
-	•	Solvency Score (0–70)
-	•	Digital Sophistication Adjustment (−30 to 0)
+
+Formula:
+```
+Fit Score = clamp(Solvency Score + Pixel Bonus, 0, 100)
+```
+
+Components:
+- **Solvency Score**: 0-85 points (business fundamentals)
+- **Pixel Bonus**: 0-10 points (digital maturity bonus)
+
+Breakdown by Component:
+
+| Component | Max Points | Scoring Logic |
+|-----------|-----------|---------------|
+| GMB Match | 5 | Google Business Profile found |
+| Website | 15 | Valid custom domain (15), GMB URL (5), subdomain (0), invalid (0) |
+| Google Reviews | 25 | ≥55 reviews (25), 15-54 (20), <15 (0) |
+| Years in Business | 15 | ≥8 years (15), 4-7 (10), 2-3 (5), <2 (0) |
+| Employee Count | 15 | >5 employees (15), 2-4 (5), <2 (0) |
+| Physical Location | 10 | Storefront/office (10), service-area (5), residential (0) |
+| Pixel Bonus | 10 | 2+ pixels (10), 1 pixel (5), no pixels (0) |
+| **Total** | **95** | Sum capped at 100 |
 
 Output Tiers
 
-Score	Tier	Action
-0–39	Disqualified	Do not sell
-40–59	MQL	Caution
-60–79	High Fit	Standard close
-80–100	Premium	Priority routing
+| Score | Tier | Action | Usage |
+|-------|------|--------|-------|
+| 0 | Disqualified | Do not sell | No GMB verification |
+| 1-39 | Low Quality | High scrutiny | Weak fundamentals |
+| 40-59 | MQL | Standard qualification | Acceptable baseline |
+| 60-79 | Good MQL | Standard close | Solid business |
+| 80-99 | High Quality | Priority routing | Strong fundamentals |
+| 100 | Premium | Fast-track | Perfect score |
+
+Score__c Mapping (0-5 scale for ad platforms)
+
+**Only for Facebook, TikTok, and Google leads:**
+
+| Fit Score | Score__c | Tier |
+|-----------|----------|------|
+| 0 | 0 | Disqualified - no GMB |
+| 1-39 | 1 | Low Quality |
+| 40-59 | 2 | MQL |
+| 60-79 | 3 | Good MQL |
+| 80-99 | 4 | High Quality |
+| 100 | 5 | Premium |
+
+**Note**: Score__c is used for ad platform optimization (Facebook Conversions API, Google Enhanced Conversions, TikTok Events API). Other lead sources receive Fit Score (0-100) only.
 
 
 ⸻
@@ -132,61 +207,176 @@ Score	Tier	Action
 7. Salesforce Integration (Core Requirement)
 
 Objects Updated
-	•	Lead
-	•	Opportunity
+- Lead (primary)
+- Opportunity (future)
 
-Fields (New or Required)
+Custom Fields (Production)
 
-Field	Type
-Fit_Score__c	Number
-Fit_Tier__c	Picklist
-Years_In_Business__c	Number
-Employee_Estimate__c	Number
-Google_Reviews_Count__c	Number
-Has_Website__c	Boolean
-Digital_Sophistication_Level__c	Picklist
-Enrichment_Source__c	Text
-Fit_Score_Timestamp__c	Datetime
+| Field API Name | Type | Description | Source |
+|----------------|------|-------------|--------|
+| `Fit_Score__c` | Number(3,0) | Fit Score (0-100) | Calculated |
+| `Score__c` | Number(1,0) | Ad platform score (0-5) | Mapped from Fit Score |
+| `Number_of_Employees__c` | Number | Employee count | PDL |
+| `Employee_Size_Range__c` | Text | Employee range (e.g., "11-50") | PDL |
+| `Number_of_Years_in_Business__c` | Number | Years operating | PDL → Domain age → 0 |
+| `Year_Founded__c` | Number | Founded year | PDL |
+| `Industry__c` | Text | Industry classification | PDL |
+| `NAICS_Code__c` | Text | NAICS industry code | PDL |
+| `Inferred_Revenue__c` | Text | Revenue range | PDL |
+| `Number_of_GMB_Reviews__c` | Number | Google reviews count | Google Places |
+| `GMB_Star_Rating__c` | Number(2,1) | Google rating (1.0-5.0) | Google Places |
+| `Has_GMB__c` | Boolean | GMB profile exists | Google Places |
+| `GMB_URL__c` | URL | Google Maps link | Google Places |
+| `Has_Website__c` | Boolean | Valid website exists | Website Validator |
+| `Has_Physical_Location__c` | Boolean | Physical address verified | Google Places |
+| `Location_Type__c` | Picklist | Business location type | Google Places |
+| `Business_License__c` | Text | Business license info | Future |
+| `Spending_on_Marketing__c` | Boolean | Active digital marketing | Pixels + Years |
+| `Has_Meta_Pixel__c` | Boolean | Meta Pixel detected | Website Tech |
+| `Has_GA4__c` | Boolean | GA4 detected | Website Tech |
+| `Has_Google_Ads_Tag__c` | Boolean | Google Ads tag detected | Website Tech |
+| `Has_TikTok_Pixel__c` | Boolean | TikTok Pixel detected | Website Tech |
+| `Has_HubSpot__c` | Boolean | HubSpot detected | Website Tech |
+| `Pixels_Detected__c` | Text | Comma-separated pixel list | Website Tech |
+| `Enrichment_Status__c` | Picklist | completed/failed/pending | System |
+| `Score_Breakdown__c` | Long Text Area | JSON score breakdown | Calculated |
+| `Enrichment_Timestamp__c` | DateTime | Last enrichment time | System |
+
+GMB Field Filling (Auto-population)
+
+When Google Business Profile is found, the following standard Lead fields are auto-filled if empty:
+
+| Standard Field | Source | Behavior |
+|----------------|--------|----------|
+| `Website` | GMB website | Fill if empty |
+| `Street` | GMB address | Fill if empty OR overwrite if high-confidence match |
+| `City` | GMB address | Fill if empty OR overwrite if high-confidence match |
+| `State` | GMB address | Fill if empty OR overwrite if high-confidence match |
+| `PostalCode` | GMB address | Fill if empty OR overwrite if high-confidence match |
+| `Country` | GMB address | Fill if empty OR overwrite if high-confidence match |
+
+Address overwrite logic:
+- If Lead name exactly matches GMB name → overwrite address (high confidence)
+- If Lead name is fuzzy match or different → fill only if empty (low confidence)
 
 Salesforce is the source of truth.
 
 ⸻
 
-8. API Contracts (MVP)
+8. API Contracts (Production)
 
-Input (from Workato HTTP action)
+Primary Endpoint: POST /enrich
 
-POST /enrich
-Headers: X-API-Key: {api_key}
+**Authentication**: X-API-Key header (required)
 
+**Request Body**:
+```json
 {
   "salesforce_lead_id": "00Qxxxxxxxxxxxx",
   "business_name": "ABC Roofing",
-  "phone": "+1...",
-  "website": "example.com",
+  "phone": "+15551234567",
+  "website": "https://abcroofing.com",
   "city": "Austin",
   "state": "TX"
 }
+```
 
-Output (returned to Workato for Salesforce update)
-
+**Response** (returned to Workato for Salesforce update):
+```json
 {
   "enrichment_status": "completed",
   "fit_score": 78,
-  "fit_tier": "High Fit",
-  "employee_estimate": 5,
-  "years_in_business": 4,
+  "score": 3,
+  "employee_count": 12,
+  "employee_size_range": "11-50",
+  "years_in_business": 8,
+  "year_founded": 2016,
+  "industry": "Construction",
+  "naics_code": "238160",
+  "inferred_revenue": "$1M-$10M",
   "google_reviews_count": 23,
   "google_rating": 4.5,
+  "has_gmb": true,
+  "gmb_url": "https://maps.google.com/?cid=...",
   "has_website": true,
   "has_physical_location": true,
+  "location_type": "storefront",
+  "spending_on_marketing": true,
   "pixels_detected": "meta,ga4",
   "has_meta_pixel": true,
   "has_ga4": true,
   "has_google_ads": false,
+  "has_tiktok_pixel": false,
   "has_hubspot": false,
-  "enrichment_timestamp": "2024-01-01T00:00:00.000Z"
+  "website_validation": {
+    "exists": true,
+    "status_code": 200,
+    "domain_age_years": 8,
+    "redirected": false
+  },
+  "score_breakdown": {
+    "solvency_score": {
+      "gmb_match": 5,
+      "website": 15,
+      "reviews": 20,
+      "years_in_business": 10,
+      "employees": 15,
+      "physical_location": 10,
+      "total": 75
+    },
+    "pixel_bonus": {
+      "pixels_detected": ["meta", "ga4"],
+      "bonus": 10
+    },
+    "final_score": 85
+  },
+  "salesforce_fields": {
+    "Fit_Score__c": 78,
+    "Score__c": 3,
+    "Number_of_Employees__c": 12,
+    "Employee_Size_Range__c": "11-50",
+    "Number_of_Years_in_Business__c": 8,
+    "Year_Founded__c": 2016,
+    "Industry__c": "Construction",
+    "NAICS_Code__c": "238160",
+    "Inferred_Revenue__c": "$1M-$10M",
+    "Number_of_GMB_Reviews__c": 23,
+    "GMB_Star_Rating__c": 4.5,
+    "Has_GMB__c": true,
+    "GMB_URL__c": "https://maps.google.com/?cid=...",
+    "Has_Website__c": true,
+    "Has_Physical_Location__c": true,
+    "Location_Type__c": "storefront",
+    "Spending_on_Marketing__c": true,
+    "Has_Meta_Pixel__c": true,
+    "Has_GA4__c": true,
+    "Has_Google_Ads_Tag__c": false,
+    "Has_TikTok_Pixel__c": false,
+    "Has_HubSpot__c": false,
+    "Pixels_Detected__c": "meta,ga4",
+    "Enrichment_Status__c": "completed",
+    "Score_Breakdown__c": "{...JSON...}",
+    "Enrichment_Timestamp__c": "2026-01-12T00:00:00.000Z"
+  },
+  "enrichment_timestamp": "2026-01-12T00:00:00.000Z",
+  "request_id": "uuid-xxxx-xxxx-xxxx"
 }
+```
+
+Automatic Endpoint: POST /api/workato/enrich
+
+**Purpose**: Fully automated enrichment - Workato only sends Salesforce Lead ID, API fetches Lead data, enriches it, and updates Salesforce directly.
+
+**Request**:
+```json
+{
+  "salesforce_lead_id": "00Qxxxxxxxxxxxx"
+}
+```
+
+**Response**: Same as POST /enrich
+
+**Note**: This endpoint is used for "set it and forget it" automation. Workato just triggers the enrichment, and the API handles everything else.
 
 
 ⸻

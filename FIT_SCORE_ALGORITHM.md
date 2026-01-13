@@ -1,7 +1,7 @@
 # TSI Fit Score Algorithm - Technical Review
 
-**Last Updated**: 2026-01-09
-**Algorithm Version**: 2.0 (with GMB Match Bonus & Refined Location Scoring)
+**Last Updated**: 2026-01-12
+**Algorithm Version**: 2.1 (with Website Validation & Domain Age Fallback)
 
 ---
 
@@ -47,33 +47,59 @@ if (googlePlaces?.place_id) {
 
 ### 2. Website (+0/+5/+15 points)
 **Scoring Logic**:
-- **+15 points**: Custom domain (e.g., `abcroofing.com`)
-- **+5 points**: Google/GMB website (e.g., `business.site`)
-- **+0 points**: Subdomain or no website (e.g., `shop.wix.com/mystore`)
+- **+15 points**: Custom domain (e.g., `abcroofing.com`) AND URL is valid
+- **+5 points**: Google/GMB website (e.g., `business.site`) AND URL is valid
+- **+0 points**: Subdomain, invalid URL, or no website
 
 **Why It Matters**:
 - Custom domains show business investment and permanence
 - GMB sites show minimal digital presence
 - Subdomains often indicate low-commitment web presence
+- **Invalid URLs indicate fake or abandoned websites**
+
+**Website Validation** (NEW: Jan 2026):
+Before awarding website points, the URL is validated using:
+1. **HTTP HEAD request** with 10-second timeout
+2. **Redirect following** (up to 5 redirects)
+3. **WHOIS domain age lookup** for domain verification
+4. **Results cached in database** (30-day TTL)
 
 **Detection Logic**:
 ```typescript
 const websiteUrl = googlePlaces?.gmb_website || pdl?.website_confirmed;
+const websiteValidation = enrichmentData.website_validation;
 
-if (isGoogleOrGmbUrl(websiteUrl)) {
-  score += 5;  // GMB/Google URL
-} else if (isSubdomain(websiteUrl)) {
-  score += 0;  // Subdomain
-} else if (websiteUrl) {
-  score += 15; // Custom domain
+// Check if website validation failed
+const websiteExists = websiteValidation ? websiteValidation.exists : true;
+
+if (websiteUrl && websiteExists) {
+  const isGoogleUrl = isGoogleOrGmbUrl(websiteUrl);
+  const isSubdomainUrl = isSubdomain(websiteUrl);
+
+  if (isGoogleUrl) {
+    score += 5;  // GMB/Google URL (valid)
+  } else if (isSubdomainUrl) {
+    score += 0;  // Subdomain
+  } else {
+    score += 15; // Custom domain (valid)
+  }
+} else if (!websiteExists) {
+  score += 0;  // Invalid URL - explicitly 0 points
 }
 ```
 
+**URL Validation Examples**:
+- ✅ `abcroofing.com` (valid, returns 200) → +15 points
+- ✅ `business.site` (valid GMB site) → +5 points
+- ❌ `doesnotexist12345.com` (validation fails) → +0 points
+- ❌ `example.com/invalid` (404 error) → +0 points
+- ⚠️ `shop.example.com` (valid but subdomain) → +0 points
+
 **Subdomain Detection**:
-- `example.com` → NOT subdomain (+15)
-- `www.example.com` → NOT subdomain (+15)
+- `example.com` → NOT subdomain (+15 if valid)
+- `www.example.com` → NOT subdomain (+15 if valid)
 - `shop.example.com` → Subdomain (+0)
-- `example.co.uk` → NOT subdomain (+15, common TLD)
+- `example.co.uk` → NOT subdomain (+15 if valid, common TLD)
 
 ---
 
@@ -113,14 +139,39 @@ if (reviewCount >= 30) {
 - **4-7 years**: +10 points (established)
 - **8+ years**: +15 points (proven longevity)
 
-**Data Source Priority**:
-1. People Data Labs (PDL) `years_in_business`
-2. Clay (legacy) `years_in_business`
+**Data Source Priority** (NEW: Domain Age Fallback):
+1. **People Data Labs (PDL)** `years_in_business` (primary)
+2. **Website Domain Age** from WHOIS lookup (fallback when PDL missing)
+3. **Clay (legacy)** `years_in_business` (legacy fallback)
+4. **Default**: 0 years
+
+**Domain Age Integration** (NEW: Jan 2026):
+When PDL data is unavailable, the system extracts domain age from WHOIS data:
+- Domain creation date extracted from WHOIS records
+- Age calculated in years from creation date to present
+- Results cached in database for 30 days
+
+**Implementation**:
+```typescript
+const domainAgeYears = enrichmentData.website_validation?.domain_age?.age_years;
+const yearsInBusiness = pdl?.years_in_business ?? domainAgeYears ?? clay?.years_in_business ?? 0;
+
+if (yearsInBusiness >= 8) {
+  score += 15;
+} else if (yearsInBusiness >= 4) {
+  score += 10;
+} else if (yearsInBusiness >= 2) {
+  score += 5;
+} else {
+  score += 0;
+}
+```
 
 **Why It Matters**:
 - Longer tenure = lower churn risk
 - Established businesses more likely to invest in long-term services
 - Past 3-year survival indicates business viability
+- **Domain age provides proxy when company data unavailable**
 
 ---
 
@@ -366,6 +417,50 @@ After GMB search returns results, validates match using fuzzy logic:
 
 ## Recent Algorithm Changes
 
+### January 12, 2026 - Website Validation & Domain Age Integration
+
+**Issue**: No validation of website URLs before awarding points. PDL often missing years_in_business data.
+
+**Changes Made**:
+
+1. **Website Validation Service Integration**:
+   - HTTP HEAD request with 10-second timeout
+   - Redirect following (up to 5 redirects)
+   - WHOIS domain age lookup
+   - 30-day cache in database (`website_validation_data` JSONB column)
+
+2. **Website Scoring Update**:
+   - Invalid URLs now receive **0 points** explicitly
+   - Validation check runs before awarding website points
+   - Tech detection still attempted even if validation fails
+
+3. **Domain Age Fallback**:
+   - Domain age now used as fallback for years_in_business when PDL missing
+   - Priority: PDL → Domain age → Clay → 0
+   - Helps score leads that lack company enrichment data
+
+4. **Database Schema**:
+   - Added `website_validation_data JSONB` column to `lead_enrichments`
+   - Created btree index on `website_validation_data->>'url'` for cache lookups
+
+**Impact**:
+- Invalid/fake URLs no longer receive website points
+- More leads get years_in_business scoring via domain age fallback
+- Reduced latency for repeated URL validations (30-day cache)
+
+**Example**:
+```
+Lead with invalid URL "doesnotexist12345.com":
+- Old: +15 points (assumed valid custom domain)
+- New: +0 points (validation failed)
+
+Lead with domain age 8 years but no PDL data:
+- Old: +0 points (no years_in_business data)
+- New: +15 points (domain age used as fallback)
+```
+
+---
+
 ### January 9, 2026 - Location Scoring Refinement
 
 **Issue**: Home-based and mobile contractors were receiving +20 points (office classification) when they should only get +10 (service area).
@@ -432,7 +527,25 @@ After GMB search returns results, validates match using fuzzy logic:
 - `inferred_revenue` (revenue estimate)
 - `website_confirmed` (verified website)
 
-### 3. Website Tech Detection (Puppeteer)
+### 3. Website Validator (NEW: Jan 2026)
+**Provides**:
+- `exists` (URL validation via HTTP HEAD)
+- `status_code` (HTTP response code)
+- `final_url` (after redirects)
+- `redirected` (boolean)
+- `response_time_ms` (latency)
+- `domain_age` (from WHOIS):
+  - `created_date` (domain registration date)
+  - `age_years` (calculated age in years)
+  - `age_days` (calculated age in days)
+  - `registrar` (domain registrar)
+  - `updated_date` (last updated)
+  - `expiry_date` (expiration date)
+- `error` (validation error message if failed)
+
+**Caching**: Results cached in PostgreSQL for 30 days
+
+### 4. Website Tech Detection (Puppeteer)
 **Provides**:
 - `has_meta_pixel` (Facebook tracking)
 - `has_ga4` (Google Analytics 4)

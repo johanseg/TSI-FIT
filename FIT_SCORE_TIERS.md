@@ -1,7 +1,7 @@
 # TSI Fit Score - Detailed Scoring Tiers
 
-**Last Updated**: 2026-01-09
-**Algorithm Version**: 2.0
+**Last Updated**: 2026-01-12
+**Algorithm Version**: 2.1 (with Website Validation & Domain Age)
 
 ---
 
@@ -50,45 +50,71 @@ if (googlePlaces?.place_id) {
 | Website Type | Points | Label | Examples |
 |-------------|--------|-------|----------|
 | **No website** | 0 | No Digital Presence | No URL found |
+| **Invalid URL** | 0 | Failed Validation | URL doesn't respond, 404, timeout |
 | **Subdomain** | 0 | Low Commitment | `shop.mysite.com`, `business.wix.com/abc` |
-| **GMB/Google URL** | 5 | Basic Presence | `business.site`, `g.page/abc`, `*.google.com` |
-| **Custom Domain** | 15 | Professional Website | `abcroofing.com`, `smithplumbing.net` |
+| **GMB/Google URL (valid)** | 5 | Basic Presence | `business.site`, `g.page/abc`, `*.google.com` |
+| **Custom Domain (valid)** | 15 | Professional Website | `abcroofing.com`, `smithplumbing.net` |
+
+### Website Validation (NEW: Jan 2026)
+
+Before awarding points, all URLs are validated:
+
+**Validation Process**:
+1. **HTTP HEAD request** with 10-second timeout
+2. **Redirect following** (up to 5 redirects)
+3. **WHOIS domain age lookup** for verification
+4. **Results cached** in database (30-day TTL)
+
+**Validation Outcomes**:
+- ✅ **Valid** (status 200-399): Award points based on URL type
+- ❌ **Invalid** (status 400+, timeout, DNS failure): +0 points
+- ⚠️ **Not validated** (no validation attempt): Assume valid (legacy behavior)
 
 ### Website Type Detection
 
-#### Custom Domain (15 points)
+#### Custom Domain (15 points if valid)
 - Root domain: `example.com`
 - With www: `www.example.com`
 - Multi-part TLDs: `example.co.uk`, `example.com.au`
 
-#### GMB/Google URL (5 points)
+#### GMB/Google URL (5 points if valid)
 - Google Sites: `business.site`
 - Google Pages: `g.page/*`
 - Any `*.google.com` domain
 
-#### Subdomain (0 points)
+#### Invalid URL (0 points)
+- Non-existent domains: `doesnotexist12345.com`
+- Timeout/Connection refused
+- 404 Not Found errors
+- DNS resolution failures
+
+#### Subdomain (0 points even if valid)
 - Third-level domains: `shop.example.com`
 - Platform subdomains: `mybusiness.wix.com/store`
 - E-commerce subdomains: `store.shopify.com/abc`
 
 **Exception for Common TLDs**:
 ```
-example.co.uk → NOT subdomain (15 pts)
+example.co.uk → NOT subdomain (15 pts if valid)
 shop.example.co.uk → Subdomain (0 pts)
 ```
 
 ### Implementation Logic
 ```typescript
 const websiteUrl = googlePlaces?.gmb_website || pdl?.website_confirmed;
+const websiteValidation = enrichmentData.website_validation;
+const websiteExists = websiteValidation ? websiteValidation.exists : true;
 
 if (!websiteUrl) {
-  score = 0;
+  score = 0;  // No website
+} else if (!websiteExists) {
+  score = 0;  // Invalid URL (validation failed)
 } else if (isGoogleOrGmbUrl(websiteUrl)) {
-  score = 5;  // GMB/Google URL
+  score = 5;  // GMB/Google URL (valid)
 } else if (isSubdomain(websiteUrl)) {
-  score = 0;  // Subdomain
+  score = 0;  // Subdomain (even if valid)
 } else {
-  score = 15; // Custom domain
+  score = 15; // Custom domain (valid)
 }
 ```
 
@@ -99,11 +125,13 @@ if (!websiteUrl) {
 
 ### Examples
 - ❌ **0 pts**: No website provided
+- ❌ **0 pts**: `doesnotexist12345.com` (invalid URL, validation failed)
+- ❌ **0 pts**: `example.com/404` (returns 404 error)
 - ❌ **0 pts**: `mybusiness.wix.com/abc` (subdomain)
-- ⚠️ **5 pts**: `business.site` (GMB website)
-- ⚠️ **5 pts**: `g.page/smithplumbing` (Google page)
-- ✅ **15 pts**: `abcroofing.com` (custom domain)
-- ✅ **15 pts**: `smith-plumbing.co.uk` (custom domain with multi-part TLD)
+- ⚠️ **5 pts**: `business.site` (GMB website, valid)
+- ⚠️ **5 pts**: `g.page/smithplumbing` (Google page, valid)
+- ✅ **15 pts**: `abcroofing.com` (custom domain, valid)
+- ✅ **15 pts**: `smith-plumbing.co.uk` (custom domain with multi-part TLD, valid)
 
 ---
 
@@ -188,9 +216,24 @@ Points:     |--0pts--|--5pts--|--------10pts--------|------15pts----->
             Risk      Risk
 ```
 
+### Data Source Priority (NEW: Jan 2026)
+
+**Priority Chain**:
+1. **PDL** `years_in_business` (primary, most accurate)
+2. **Domain Age** from WHOIS lookup (fallback when PDL missing)
+3. **Clay** `years_in_business` (legacy fallback)
+4. **Default**: 0 years
+
+**Domain Age Integration**:
+When PDL data is unavailable, domain age is extracted from WHOIS records:
+- Domain creation date → age in years
+- Cached in database for 30 days
+- Provides proxy for business age
+
 ### Implementation Logic
 ```typescript
-const yearsInBusiness = pdl?.years_in_business ?? clay?.years_in_business ?? 0;
+const domainAgeYears = enrichmentData.website_validation?.domain_age?.age_years;
+const yearsInBusiness = pdl?.years_in_business ?? domainAgeYears ?? clay?.years_in_business ?? 0;
 
 if (yearsInBusiness >= 8) {
   score = 15;
@@ -221,14 +264,21 @@ if (yearsInBusiness >= 8) {
 - **15 points**: Mature business, very low churn risk
 
 ### Examples
-- ❌ **0 pts**: Founded 2025 (0 years) - brand new startup
-- ❌ **0 pts**: Founded 2024 (1 year) - still in high-risk phase
-- ⚠️ **5 pts**: Founded 2023 (2 years) - survived initial challenges
-- ⚠️ **5 pts**: Founded 2022 (3 years) - building momentum
-- ✅ **10 pts**: Founded 2020 (5 years) - weathered COVID, established
-- ✅ **10 pts**: Founded 2019 (6 years) - proven business model
-- ✅ **15 pts**: Founded 2016 (9 years) - mature, stable business
-- ✅ **15 pts**: Founded 2008 (17 years) - survived 2008 recession, very stable
+
+**With PDL Data** (preferred):
+- ❌ **0 pts**: PDL years_in_business = 0 - brand new startup
+- ❌ **0 pts**: PDL years_in_business = 1 - still in high-risk phase
+- ⚠️ **5 pts**: PDL years_in_business = 2 - survived initial challenges
+- ⚠️ **5 pts**: PDL years_in_business = 3 - building momentum
+- ✅ **10 pts**: PDL years_in_business = 5 - weathered COVID, established
+- ✅ **10 pts**: PDL years_in_business = 6 - proven business model
+- ✅ **15 pts**: PDL years_in_business = 9 - mature, stable business
+
+**With Domain Age Fallback** (NEW: when PDL missing):
+- ❌ **0 pts**: Domain age 1 year, no PDL - new domain
+- ⚠️ **5 pts**: Domain age 3 years, no PDL - established domain
+- ✅ **10 pts**: Domain age 6 years, no PDL - mature domain
+- ✅ **15 pts**: Domain age 12 years, no PDL - very old domain (likely established business)
 
 ---
 
@@ -752,6 +802,11 @@ FINAL SCORE:      100  🏆 PREMIUM TIER (capped)
   - Increased website scoring (+10 → +15)
   - Refined location classification (service area vs office)
   - Switched from Clay to People Data Labs
+- **v2.1** (Jan 12, 2026):
+  - Added website URL validation (HTTP HEAD + WHOIS)
+  - Invalid URLs now receive 0 points explicitly
+  - Domain age fallback for years_in_business when PDL missing
+  - 30-day caching for validation results
 
 ### Future Enhancements
 1. **Marketing Spend Population**: Integrate PDL marketing spend data

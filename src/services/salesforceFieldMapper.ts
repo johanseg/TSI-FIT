@@ -82,82 +82,39 @@ export function mapToSalesforceFields(
 
 /**
  * Map employee count to Salesforce picklist value
- * 0 -> "0"
- * 1-2 -> "1 - 2"
- * 3-5 -> "3 - 5"
- * 6+ -> "Over 5"
  */
 function mapEmployeeCount(employeeEstimate?: number): EmployeePicklist | null {
-  if (employeeEstimate === undefined || employeeEstimate === null) {
-    return null;
-  }
-
-  if (employeeEstimate === 0) {
-    return '0';
-  } else if (employeeEstimate <= 2) {
-    return '1 - 2';
-  } else if (employeeEstimate <= 5) {
-    return '3 - 5';
-  } else {
-    return 'Over 5';
-  }
+  if (employeeEstimate == null) return null;
+  if (employeeEstimate === 0) return '0';
+  if (employeeEstimate <= 2) return '1 - 2';
+  if (employeeEstimate <= 5) return '3 - 5';
+  return 'Over 5';
 }
 
 /**
  * Map Google Business Profile review count to Salesforce picklist
- * < 15 reviews -> "Under 15"
- * >= 15 reviews -> "Over 14"
  */
 function mapGBPReviews(reviewCount?: number): GBPReviewsPicklist | null {
-  if (reviewCount === undefined || reviewCount === null) {
-    return null;
-  }
-
+  if (reviewCount == null) return null;
   return reviewCount >= 15 ? 'Over 14' : 'Under 15';
 }
 
 /**
  * Map years in business to Salesforce picklist
- * < 1 year -> "Under 1 Year"
- * 1-3 years -> "1 - 3 Years"
- * 4-5 years -> "3 - 5 Years" (note: SF field uses "3 - 5" for 4-5)
- * 6+ years -> "5 - 10+ years"
  */
 function mapYearsInBusiness(yearsInBusiness?: number): YearsInBusinessPicklist | null {
-  if (yearsInBusiness === undefined || yearsInBusiness === null) {
-    return null;
-  }
-
-  if (yearsInBusiness < 1) {
-    return 'Under 1 Year';
-  } else if (yearsInBusiness <= 3) {
-    return '1 - 3 Years';
-  } else if (yearsInBusiness <= 5) {
-    return '3 - 5 Years';
-  } else {
-    return '5 - 10+ years';
-  }
+  if (yearsInBusiness == null) return null;
+  if (yearsInBusiness < 1) return 'Under 1 Year';
+  if (yearsInBusiness <= 3) return '1 - 3 Years';
+  if (yearsInBusiness <= 5) return '3 - 5 Years';
+  return '5 - 10+ years';
 }
 
 /**
- * Determine location type from Google Places data using enhanced classification
- *
- * Location types:
- * - "Retail Location (Store Front)": Customer-facing storefront (retail, restaurant, salon, etc.)
- * - "Physical Location (Office)": Commercial office/shop location (contractors with offices, professional services)
- * - null: Service-area business, residential, or unknown (do NOT update Location_Type__c unless certain)
- *
- * IMPORTANT: NEVER update the Location_Type__c field regardless of classification.
- * This field should ONLY be manually set by sales reps or other processes.
- * The location classification is still used internally for fit score calculation,
- * but we do not write it back to Salesforce.
+ * Determine location type from Google Places data
+ * Returns null - Location_Type__c is only set manually by sales reps
  */
-function mapLocationType(
-  googlePlaces?: GooglePlacesData
-): LocationTypePicklist | null {
-  // ALWAYS return null - do not update Location_Type__c field in Salesforce
-  // The location is still classified internally for scoring purposes in fitScore.ts
-  // but we never write it back to Salesforce
+function mapLocationType(_googlePlaces?: GooglePlacesData): LocationTypePicklist | null {
   return null;
 }
 

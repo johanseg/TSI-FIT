@@ -1,8 +1,9 @@
 # Fit Score to Score__c Mapping Analysis
 
-**Date**: 2026-01-09
-**Sample Size**: 100 leads from today
-**Purpose**: Create automated mapping from Fit_Score__c (0-100) to Score__c (0-5)
+**Date**: 2026-01-09 (Mapping created)
+**Last Updated**: 2026-01-12 (Algorithm updated with website validation)
+**Sample Size**: 100 leads from January 9, 2026
+**Purpose**: Automated mapping from Fit_Score__c (0-100) to Score__c (0-5)
 
 ---
 
@@ -162,6 +163,8 @@
 
 ## Approved Mapping (January 9, 2026)
 
+**Status**: ✅ **IN PRODUCTION** as of January 12, 2026
+
 ### Implementation Formula
 
 ```typescript
@@ -171,7 +174,7 @@ function fitScoreToScore(fitScore: number | null): number {
   }
 
   if (fitScore === 0) return 0;        // Exactly 0 (no GMB found)
-  if (fitScore >= 100) return 5;       // 100+ (Premium)
+  if (fitScore >= 100) return 5;       // 100 (Premium - perfect score)
   if (fitScore >= 80) return 4;        // 80-99 (High Quality)
   if (fitScore >= 60) return 3;        // 60-79 (Good MQL)
   if (fitScore >= 40) return 2;        // 40-59 (MQL)
@@ -179,6 +182,8 @@ function fitScoreToScore(fitScore: number | null): number {
   return 0;                            // Fallback
 }
 ```
+
+**File Location**: [src/services/scoreMapper.ts](src/services/scoreMapper.ts)
 
 ### Visual Representation
 
@@ -210,6 +215,19 @@ The `shouldUpdateScore()` function checks the `LeadSource` field and returns `tr
 - `Facebook`
 - `TikTok`
 - `Google`
+
+### Algorithm Updates (January 12, 2026)
+
+**Website Validation Integration**:
+The Fit Score algorithm now validates website URLs before awarding points:
+- Invalid URLs receive 0 points (previously assumed valid)
+- WHOIS domain age lookup provides fallback for years_in_business when PDL missing
+- Results cached in database for 30 days
+
+**Impact on Score__c Mapping**:
+- Leads with invalid URLs will have lower Fit Scores → lower Score__c
+- Leads without PDL data may score higher if domain age is old
+- More accurate Score__c values due to validated website data
 
 ---
 

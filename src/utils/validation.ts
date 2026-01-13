@@ -2,26 +2,17 @@
  * Salesforce ID Validation Utilities
  *
  * Provides validation functions for Salesforce Lead IDs to prevent SOQL injection attacks.
- * Salesforce Lead IDs can be either 15 or 18 characters, starting with "00Q" for Leads
+ * Salesforce Lead IDs can be either 15 or 18 characters, starting with "00Q" for Leads.
  */
+
+// Salesforce Lead ID pattern: 00Q followed by 12 or 15 alphanumeric characters
+const SALESFORCE_LEAD_ID_PATTERN = /^00Q[a-zA-Z0-9]{12}$|^00Q[a-zA-Z0-9]{15}$/;
 
 /**
  * Validates a single Salesforce Lead ID format
- * @param id - The Salesforce Lead ID to validate
- * @returns true if the ID matches the valid Salesforce Lead ID format, false otherwise
  */
 export function validateSalesforceId(id: string): boolean {
-  if (!id || typeof id !== 'string') {
-    return false;
-  }
-
-  // Salesforce Lead IDs: 15 or 18 characters starting with "00Q"
-  // 15-char format: 00Q followed by 12 alphanumeric characters
-  // 18-char format: 00Q followed by 15 alphanumeric characters (case-sensitive extension)
-  const salesforceLeadPattern15 = /^00Q[a-zA-Z0-9]{12}$/;
-  const salesforceLeadPattern18 = /^00Q[a-zA-Z0-9]{15}$/;
-
-  return salesforceLeadPattern15.test(id) || salesforceLeadPattern18.test(id);
+  return typeof id === 'string' && SALESFORCE_LEAD_ID_PATTERN.test(id);
 }
 
 /**
