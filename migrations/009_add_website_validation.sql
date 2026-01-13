@@ -6,10 +6,10 @@
 ALTER TABLE lead_enrichments
 ADD COLUMN website_validation_data JSONB;
 
--- Create GIN index for fast cache lookups by URL
+-- Create index for fast cache lookups by URL
+-- Using btree index for text field (GIN requires pg_trgm extension)
 CREATE INDEX idx_enrichments_website_validation_url
-ON lead_enrichments
-USING gin ((website_validation_data->>'url'));
+ON lead_enrichments ((website_validation_data->>'url'));
 
 -- Add comment for documentation
 COMMENT ON COLUMN lead_enrichments.website_validation_data IS
