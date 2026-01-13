@@ -9,7 +9,7 @@ LanderLab Form → Workato → Salesforce (create Lead)
                     ↓
               Workato calls POST /enrich or POST /api/workato/enrich
                     ↓
-              TSI enriches (Google Places, Website Tech, People Data Labs)
+              TSI enriches (Google Places, Website Validator, Website Tech, People Data Labs)
                     ↓
               TSI updates Salesforce Lead directly (or returns data for Workato)
                     ↓
@@ -79,6 +79,7 @@ PORT=4900
    psql $DATABASE_URL -f migrations/006_fix_enrichments_lead_id.sql
    psql $DATABASE_URL -f migrations/007_replace_clay_with_pdl.sql
    psql $DATABASE_URL -f migrations/008_add_score_column.sql
+   psql $DATABASE_URL -f migrations/009_add_website_validation.sql
    ```
 
 3. **Build the project**:
@@ -120,6 +121,7 @@ PORT=4900
    psql $DATABASE_URL -f migrations/006_fix_enrichments_lead_id.sql
    psql $DATABASE_URL -f migrations/007_replace_clay_with_pdl.sql
    psql $DATABASE_URL -f migrations/008_add_score_column.sql
+   psql $DATABASE_URL -f migrations/009_add_website_validation.sql
    ```
 
 4. **Build and start**:
@@ -275,26 +277,28 @@ Returns enrichment KPIs for selected period (today, yesterday, this week, last w
 
 ## Fit Score Calculation
 
-### Solvency Score (0-95 points)
-- **GMB Match**: +10 if Google Business Profile found (place_id exists)
-- **Website**: +15 (custom domain), +5 (GMB/Google URL), +0 (subdomain/social)
+### Solvency Score (0-85 points)
+- **GMB Match**: +5 if Google Business Profile found (place_id exists)
+- **Website**: +15 (valid custom domain), +5 (valid GMB/Google URL), +0 (invalid URL/subdomain/no website)
+  - **URL Validation**: URLs are validated before scoring (HTTP HEAD request + WHOIS domain age)
+  - **Caching**: Validation results cached in database (30-day TTL)
 - **Google Reviews**:
-  - < 5 reviews: +0
-  - 5-14 reviews: +10
-  - 15-29 reviews: +20
-  - ≥ 30 reviews: +25
+  - < 15 reviews: +0
+  - 15-54 reviews: +20
+  - ≥ 55 reviews: +25
 - **Years in Business**:
   - < 2 years: +0
   - 2-3 years: +5
   - 4-7 years: +10
   - ≥ 8 years: +15
+  - **Priority**: PDL data → Domain age (WHOIS) → Clay data
 - **Employees**:
   - < 2 employees: +0
   - 2-4 employees: +5
   - > 5 employees: +15
 - **Physical Location**:
-  - Storefront/Office: +20
-  - Service-area business: +10
+  - Storefront/Office: +10
+  - Service-area business: +5
   - Residential/Unknown: +0
 - **Marketing Spend**:
   - $0: +0
