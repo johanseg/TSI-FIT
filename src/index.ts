@@ -89,16 +89,36 @@ function validateRequiredEnvVars(): void {
   });
 }
 
-// Database pool
+// Database pool - SSL configuration for Railway
+const databaseUrl = process.env.DATABASE_URL || '';
+const useSSL = databaseUrl.includes('railway.internal') || databaseUrl.includes('railway.app');
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: databaseUrl,
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 30000, // Increased for Railway network latency
-  // Railway always requires SSL, enable for all railway.internal connections
-  ssl: process.env.DATABASE_URL?.includes('railway.internal')
-    ? { rejectUnauthorized: false }
-    : false,
+  ssl: useSSL ? { rejectUnauthorized: false } : false,
+});
+
+// Log database configuration (without exposing password)
+const dbHost = databaseUrl.match(/@([^:]+)/)?.[1] || 'unknown';
+logger.info('Database pool configured', {
+  host: dbHost,
+  ssl: useSSL,
+  maxConnections: 20
+});
+
+// Pool error handling
+pool.on('error', (err: Error & { code?: string }) => {
+  logger.error('Unexpected database pool error', {
+    error: err.message,
+    code: err.code || 'UNKNOWN'
+  });
+});
+
+pool.on('connect', () => {
+  logger.debug('Database client connected');
 });
 
 /**
