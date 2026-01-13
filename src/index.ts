@@ -17,6 +17,9 @@ import { DashboardStatsService } from './services/dashboardStats';
 import { mapToSalesforceFields, formatForSalesforceUpdate, getFilledFieldsFromGMB, mapGMBTypesToVertical } from './services/salesforceFieldMapper';
 import { calculateScore } from './services/scoreMapper';
 
+// Timezone utilities
+import { getNYDate, getNYDayStart, getNYDayEnd, getNYWeekStart, getNYMonthStart } from './utils/timezone';
+
 // Types
 import { EnrichmentData, SalesforceEnrichmentFields } from './types/lead';
 
@@ -632,12 +635,12 @@ app.post('/api/enrich-by-id', async (req, res) => {
         await pool.query(
           `INSERT INTO lead_enrichments (
             salesforce_lead_id, job_id, enrichment_status,
-            google_places_data, pdl_data, website_tech_data,
+            google_places_data, pdl_data, website_tech_data, website_validation_data,
             fit_score, score, score_breakdown, salesforce_updated,
             has_website, number_of_employees, number_of_gbp_reviews,
             number_of_years_in_business, has_gmb, gmb_url,
             location_type, business_license, spending_on_marketing
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
           [
             salesforce_lead_id,
             requestId,
@@ -645,6 +648,7 @@ app.post('/api/enrich-by-id', async (req, res) => {
             enrichmentData.google_places ? JSON.stringify(enrichmentData.google_places) : null,
             enrichmentData.pdl ? JSON.stringify(enrichmentData.pdl) : null,
             enrichmentData.website_tech ? JSON.stringify(enrichmentData.website_tech) : null,
+            enrichmentData.website_validation ? JSON.stringify(enrichmentData.website_validation) : null,
             fitScoreResult.fit_score,
             score,
             JSON.stringify(fitScoreResult.score_breakdown),
@@ -766,26 +770,29 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
     const period = req.query.period as string || 'today';
     const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
     const offset = parseInt(req.query.offset as string) || 0;
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
-    const yesterdayEnd = new Date(todayStart.getTime() - 1);
+    
+    // Use New York timezone for all date calculations
+    const now = getNYDate();
+    const todayStart = getNYDayStart();
+    const yesterdayDate = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+    const yesterdayStart = getNYDayStart(yesterdayDate);
+    const yesterdayEnd = getNYDayEnd(yesterdayDate);
 
-    // Calculate this week (Monday to now)
-    const dayOfWeek = now.getDay();
-    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    const thisWeekStart = new Date(todayStart.getTime() - daysToMonday * 24 * 60 * 60 * 1000);
+    // Calculate this week (Monday to now) in NY timezone
+    const thisWeekStart = getNYWeekStart();
 
-    // Calculate last week (previous Monday to previous Sunday)
-    const lastWeekStart = new Date(thisWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const lastWeekEnd = new Date(thisWeekStart.getTime() - 1);
+    // Calculate last week (previous Monday to previous Sunday) in NY timezone
+    const lastWeekStartDate = new Date(thisWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const lastWeekStart = getNYWeekStart(lastWeekStartDate);
+    const lastWeekEnd = getNYDayEnd(new Date(thisWeekStart.getTime() - 1));
 
-    // Calculate this month (first day to now)
-    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    // Calculate this month (first day to now) in NY timezone
+    const thisMonthStart = getNYMonthStart();
 
-    // Calculate last month
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    // Calculate last month in NY timezone
+    const lastMonthDate = new Date(thisMonthStart.getTime() - 24 * 60 * 60 * 1000);
+    const lastMonthStart = getNYMonthStart(lastMonthDate);
+    const lastMonthEnd = getNYDayEnd(new Date(thisMonthStart.getTime() + 32 * 24 * 60 * 60 * 1000));
 
     // Determine primary period based on selection
     let primaryStart: Date;
@@ -800,9 +807,10 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
         primaryStart = yesterdayStart;
         primaryEnd = yesterdayEnd;
         primaryLabel = 'Yesterday';
-        // Compare with day before yesterday
-        comparisonStart = new Date(yesterdayStart.getTime() - 24 * 60 * 60 * 1000);
-        comparisonEnd = new Date(yesterdayStart.getTime() - 1);
+        // Compare with day before yesterday in NY timezone
+        const dayBeforeYesterday = new Date(yesterdayStart.getTime() - 24 * 60 * 60 * 1000);
+        comparisonStart = getNYDayStart(dayBeforeYesterday);
+        comparisonEnd = getNYDayEnd(dayBeforeYesterday);
         comparisonLabel = 'Day Before';
         break;
       case 'this_week':
@@ -817,9 +825,10 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
         primaryStart = lastWeekStart;
         primaryEnd = lastWeekEnd;
         primaryLabel = 'Last Week';
-        // Compare with week before
-        comparisonStart = new Date(lastWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
-        comparisonEnd = new Date(lastWeekStart.getTime() - 1);
+        // Compare with week before in NY timezone
+        const weekBeforeDate = new Date(lastWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+        comparisonStart = getNYWeekStart(weekBeforeDate);
+        comparisonEnd = getNYDayEnd(new Date(lastWeekStart.getTime() - 1));
         comparisonLabel = 'Previous Week';
         break;
       case 'this_month':
@@ -834,9 +843,11 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
         primaryStart = lastMonthStart;
         primaryEnd = lastMonthEnd;
         primaryLabel = 'Last Month';
-        // Compare with month before
-        comparisonStart = new Date(now.getFullYear(), now.getMonth() - 2, 1);
-        comparisonEnd = new Date(now.getFullYear(), now.getMonth() - 1, 0, 23, 59, 59, 999);
+        // Compare with month before in NY timezone
+        const monthBeforeDate = new Date(lastMonthStart.getTime() - 32 * 24 * 60 * 60 * 1000);
+        comparisonStart = getNYMonthStart(monthBeforeDate);
+        const prevMonthEndDate = new Date(lastMonthStart.getTime() - 24 * 60 * 60 * 1000);
+        comparisonEnd = getNYDayEnd(prevMonthEndDate);
         comparisonLabel = 'Previous Month';
         break;
       case 'today':
@@ -896,15 +907,16 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
     };
 
     // Get hourly breakdown for a date range
+    // Convert timestamps to America/New_York timezone before extracting hour
     const getHourlyStats = async (startDate: Date, endDate: Date) => {
       const result = await pool.query(`
         SELECT
-          EXTRACT(HOUR FROM created_at) as hour,
+          EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/New_York') as hour,
           COUNT(*) as count,
           ROUND(AVG(fit_score), 1) as avg_score
         FROM lead_enrichments
         WHERE created_at >= $1 AND created_at <= $2
-        GROUP BY EXTRACT(HOUR FROM created_at)
+        GROUP BY EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/New_York')
         ORDER BY hour
       `, [startDate.toISOString(), endDate.toISOString()]);
 
@@ -916,15 +928,16 @@ app.get('/api/dashboard/enrichment-kpis', async (req, res) => {
     };
 
     // Get daily breakdown for a date range
+    // Convert timestamps to America/New_York timezone before extracting date
     const getDailyStats = async (startDate: Date, endDate: Date) => {
       const result = await pool.query(`
         SELECT
-          DATE(created_at) as date,
+          DATE(created_at AT TIME ZONE 'America/New_York') as date,
           COUNT(*) as count,
           ROUND(AVG(fit_score), 1) as avg_score
         FROM lead_enrichments
         WHERE created_at >= $1 AND created_at <= $2
-        GROUP BY DATE(created_at)
+        GROUP BY DATE(created_at AT TIME ZONE 'America/New_York')
         ORDER BY date
       `, [startDate.toISOString(), endDate.toISOString()]);
 

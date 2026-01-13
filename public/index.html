@@ -844,19 +844,120 @@
       }
     });
 
-    // Calculate date range based on selection
+    // New York timezone helper functions
+    const NY_TIMEZONE = 'America/New_York';
+    
+    function getNYDateISO(date) {
+      const dateStr = date.toLocaleDateString('en-US', {
+        timeZone: NY_TIMEZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      const [month, day, year] = dateStr.split('/');
+      return `${year}-${month}-${day}`;
+    }
+    
+    function getNYDayStart(date) {
+      const targetDate = date || new Date();
+      // Get date components in NY timezone
+      const dateStr = targetDate.toLocaleDateString('en-US', { timeZone: NY_TIMEZONE });
+      const [month, day, year] = dateStr.split('/').map(Number);
+      
+      // Create a date at noon in the local timezone (to avoid DST issues)
+      // Then calculate what UTC time corresponds to midnight in NY
+      const localNoon = new Date(year, month - 1, day, 12, 0, 0);
+      
+      // Get what time this local noon is in NY timezone
+      const nyTimeForLocalNoon = localNoon.toLocaleString('en-US', {
+        timeZone: NY_TIMEZONE,
+        hour: 'numeric',
+        hour12: false
+      });
+      const nyHour = parseInt(nyTimeForLocalNoon);
+      
+      // Calculate how many hours to adjust to get to midnight in NY
+      const hoursToMidnight = 12 - nyHour;
+      const adjustedDate = new Date(localNoon.getTime() - hoursToMidnight * 60 * 60 * 1000);
+      
+      // Verify we're at midnight in NY
+      const verifyNY = adjustedDate.toLocaleString('en-US', {
+        timeZone: NY_TIMEZONE,
+        hour: 'numeric',
+        hour12: false
+      });
+      
+      // If not exactly midnight, adjust slightly
+      if (parseInt(verifyNY) !== 0) {
+        const finalAdjust = parseInt(verifyNY) * 60 * 60 * 1000;
+        return new Date(adjustedDate.getTime() - finalAdjust);
+      }
+      
+      return adjustedDate;
+    }
+    
+    function getNYDayEnd(date) {
+      const dayStart = getNYDayStart(date);
+      return new Date(dayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+    }
+    
+    function getNYWeekStart(date) {
+      const targetDate = date || new Date();
+      // Get day of week in NY timezone
+      const dayOfWeek = targetDate.toLocaleDateString('en-US', {
+        timeZone: NY_TIMEZONE,
+        weekday: 'long'
+      });
+      
+      // Get date components in NY
+      const dateParts = targetDate.toLocaleDateString('en-US', {
+        timeZone: NY_TIMEZONE,
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric'
+      });
+      const [month, day, year] = dateParts.split('/').map(Number);
+      
+      let dayOffset = 0;
+      switch (dayOfWeek) {
+        case 'Sunday': dayOffset = 6; break;
+        case 'Monday': dayOffset = 0; break;
+        case 'Tuesday': dayOffset = 1; break;
+        case 'Wednesday': dayOffset = 2; break;
+        case 'Thursday': dayOffset = 3; break;
+        case 'Friday': dayOffset = 4; break;
+        case 'Saturday': dayOffset = 5; break;
+      }
+      
+      const mondayDate = new Date(year, month - 1, day - dayOffset);
+      return getNYDayStart(mondayDate);
+    }
+    
+    function getNYMonthStart(date) {
+      const targetDate = date || new Date();
+      const dateParts = targetDate.toLocaleDateString('en-US', {
+        timeZone: NY_TIMEZONE,
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric'
+      });
+      const [month, , year] = dateParts.split('/').map(Number);
+      const firstDay = new Date(year, month - 1, 1);
+      return getNYDayStart(firstDay);
+    }
+
+    // Calculate date range based on selection (using NY timezone)
     function getDateRange(selectorId = 'dateRange') {
       const selection = document.getElementById(selectorId).value;
       const now = new Date();
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const todayStart = getNYDayStart();
       let startDate, endDate;
 
-      // Calculate week boundaries (Monday-based)
-      const dayOfWeek = now.getDay();
-      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      const thisWeekStart = new Date(todayStart.getTime() - daysToMonday * 24 * 60 * 60 * 1000);
-      const lastWeekStart = new Date(thisWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const lastWeekEnd = new Date(thisWeekStart.getTime() - 1);
+      // Calculate week boundaries (Monday-based) in NY timezone
+      const thisWeekStart = getNYWeekStart();
+      const lastWeekStartDate = new Date(thisWeekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const lastWeekStart = getNYWeekStart(lastWeekStartDate);
+      const lastWeekEnd = getNYDayEnd(new Date(thisWeekStart.getTime() - 1));
 
       switch (selection) {
         case 'today':
@@ -864,8 +965,9 @@
           endDate = now;
           break;
         case 'yesterday':
-          startDate = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
-          endDate = new Date(todayStart.getTime() - 1);
+          const yesterdayDate = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+          startDate = getNYDayStart(yesterdayDate);
+          endDate = getNYDayEnd(yesterdayDate);
           break;
         case 'this_week':
           startDate = thisWeekStart;
@@ -876,16 +978,26 @@
           endDate = lastWeekEnd;
           break;
         case 'this_month':
-          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          startDate = getNYMonthStart();
           endDate = now;
           break;
         case 'last_month':
-          startDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-          endDate = new Date(now.getFullYear(), now.getMonth(), 0);
+          const lastMonthDate = new Date(getNYMonthStart().getTime() - 32 * 24 * 60 * 60 * 1000);
+          startDate = getNYMonthStart(lastMonthDate);
+          const lastMonthEndDate = new Date(getNYMonthStart().getTime() - 24 * 60 * 60 * 1000);
+          endDate = getNYDayEnd(lastMonthEndDate);
           break;
         case 'this_quarter':
-          const quarter = Math.floor(now.getMonth() / 3);
-          startDate = new Date(now.getFullYear(), quarter * 3, 1);
+          const dateParts = now.toLocaleDateString('en-US', {
+            timeZone: NY_TIMEZONE,
+            year: 'numeric',
+            month: 'numeric',
+            day: 'numeric'
+          });
+          const [month, , year] = dateParts.split('/').map(Number);
+          const quarter = Math.floor((month - 1) / 3);
+          const quarterStart = new Date(year, quarter * 3, 1);
+          startDate = getNYDayStart(quarterStart);
           endDate = now;
           break;
         case 'last_7_days':
@@ -901,18 +1013,31 @@
           endDate = now;
           break;
         case 'this_year':
-          startDate = new Date(now.getFullYear(), 0, 1);
+          const yearParts = now.toLocaleDateString('en-US', {
+            timeZone: NY_TIMEZONE,
+            year: 'numeric',
+            month: 'numeric',
+            day: 'numeric'
+          });
+          const [, , currentYear] = yearParts.split('/').map(Number);
+          const yearStart = new Date(currentYear, 0, 1);
+          startDate = getNYDayStart(yearStart);
           endDate = now;
           break;
         default:
-          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          startDate = getNYMonthStart();
           endDate = now;
       }
 
       return {
-        startDate: startDate.toISOString().split('T')[0],
-        endDate: endDate.toISOString().split('T')[0]
+        startDate: getNYDateISO(startDate),
+        endDate: getNYDateISO(endDate)
       };
+    }
+    
+    function getNYDayEnd(date) {
+      const dayStart = getNYDayStart(date);
+      return new Date(dayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
     }
 
     // Tab switching
@@ -1014,7 +1139,7 @@
 
     function renderDashboard(stats, dbStats, dateRange) {
       const content = document.getElementById('dashboard-content');
-      const dateRangeLabel = `${new Date(dateRange.startDate).toLocaleDateString()} - ${new Date(dateRange.endDate).toLocaleDateString()}`;
+      const dateRangeLabel = `${new Date(dateRange.startDate).toLocaleDateString('en-US', { timeZone: NY_TIMEZONE })} - ${new Date(dateRange.endDate).toLocaleDateString('en-US', { timeZone: NY_TIMEZONE })}`;
 
       // Build setup warnings if needed
       let setupWarnings = '';
@@ -1220,7 +1345,7 @@
       activityChart = new Chart(ctx, {
         type: 'line',
         data: {
-          labels: sorted.map(a => new Date(a.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })),
+          labels: sorted.map(a => new Date(a.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: NY_TIMEZONE })),
           datasets: [{
             label: 'Enrichments',
             data: sorted.map(a => parseInt(a.count)),
@@ -1305,9 +1430,9 @@
         const endDate = new Date(end);
         const options = { month: 'short', day: 'numeric' };
         if (startDate.toDateString() === endDate.toDateString()) {
-          return startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+          return startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: NY_TIMEZONE });
         }
-        return `${startDate.toLocaleDateString('en-US', options)} - ${endDate.toLocaleDateString('en-US', { ...options, year: 'numeric' })}`;
+        return `${startDate.toLocaleDateString('en-US', { ...options, timeZone: NY_TIMEZONE })} - ${endDate.toLocaleDateString('en-US', { ...options, year: 'numeric', timeZone: NY_TIMEZONE })}`;
       };
 
       // Calculate success rate
@@ -1538,7 +1663,7 @@
                   <td>${e.has_gmb ? '<span class="badge success">Yes</span>' : '<span class="badge warning">No</span>'}</td>
                   <td>${e.has_website ? '<span class="badge success">Yes</span>' : '<span class="badge warning">No</span>'}</td>
                   <td>${e.salesforce_updated ? '<span class="badge success">Yes</span>' : '<span class="badge error">No</span>'}</td>
-                  <td style="font-size: 12px; color: #6b7280;">${new Date(e.created_at).toLocaleString()}</td>
+                  <td style="font-size: 12px; color: #6b7280;">${new Date(e.created_at).toLocaleString('en-US', { timeZone: NY_TIMEZONE })}</td>
                 </tr>
               `).join('')}
               ${recent_enrichments.length === 0 ? '<tr><td colspan="8" style="text-align: center; color: #6b7280;">No enrichments in this period</td></tr>' : ''}
@@ -1621,7 +1746,7 @@
       // Format dates for labels
       const labels = dailyData.map(d => {
         const date = new Date(d.date);
-        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: NY_TIMEZONE });
       });
 
       kpiDailyChart = new Chart(ctx, {
@@ -1808,7 +1933,7 @@
         if (data.localEnrichment) {
           html += `
             <div class="result-section">
-              <h5>Last Local Enrichment (${new Date(data.localEnrichment.created_at).toLocaleString()})</h5>
+              <h5>Last Local Enrichment (${new Date(data.localEnrichment.created_at).toLocaleString('en-US', { timeZone: NY_TIMEZONE })})</h5>
               <div class="result-grid">
                 <div class="result-item"><div class="label">Fit Score</div><div class="value">${data.localEnrichment.fit_score ?? '-'}</div></div>
                 <div class="result-item"><div class="label">Status</div><div class="value">${data.localEnrichment.enrichment_status || '-'}</div></div>
@@ -2114,7 +2239,7 @@
     function renderUnenrichedLeads(data, dateRange) {
       const content = document.getElementById('unenriched-content');
       const dateRangeLabel = dateRange
-        ? `${new Date(dateRange.startDate).toLocaleDateString()} - ${new Date(dateRange.endDate).toLocaleDateString()}`
+        ? `${new Date(dateRange.startDate).toLocaleDateString('en-US', { timeZone: NY_TIMEZONE })} - ${new Date(dateRange.endDate).toLocaleDateString('en-US', { timeZone: NY_TIMEZONE })}`
         : 'This Month';
 
       const { currentPage, totalPages, totalCount, pageSize } = unenrichedPagination;
@@ -2187,7 +2312,7 @@
                   <td>${lead.phone || '-'}</td>
                   <td>${[lead.city, lead.state].filter(Boolean).join(', ') || '-'}</td>
                   <td>${lead.leadSource || '-'}</td>
-                  <td>${new Date(lead.createdDate).toLocaleDateString()}</td>
+                  <td>${new Date(lead.createdDate).toLocaleDateString('en-US', { timeZone: NY_TIMEZONE })}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2406,7 +2531,7 @@
             <h3>Server Info</h3>
             <table>
               <tbody>
-                <tr><td><strong>Server Time</strong></td><td>${new Date(status.serverTime).toLocaleString()}</td></tr>
+                <tr><td><strong>Server Time</strong></td><td>${new Date(status.serverTime).toLocaleString('en-US', { timeZone: NY_TIMEZONE })}</td></tr>
                 <tr><td><strong>Uptime</strong></td><td>${formatUptime(status.uptime)}</td></tr>
               </tbody>
             </table>
@@ -2455,7 +2580,7 @@
 
         content.innerHTML = data.logs.map(log => `
           <div class="log-entry">
-            <span class="timestamp">${new Date(log.timestamp).toLocaleTimeString()}</span>
+            <span class="timestamp">${new Date(log.timestamp).toLocaleTimeString('en-US', { timeZone: NY_TIMEZONE })}</span>
             <span class="level ${log.level}">${log.level.toUpperCase()}</span>
             <span class="message">${escapeHtml(log.message)}${log.meta ? ` <code style="color: #6b7280;">${escapeHtml(JSON.stringify(log.meta))}</code>` : ''}</span>
           </div>

@@ -1,4 +1,5 @@
 import { SalesforceService } from './salesforce';
+import { getNYDate, getNYMonthStart, getNYDateISO } from '../utils/timezone';
 
 export interface ScoreDistribution {
   score: number;
@@ -217,10 +218,11 @@ export class DashboardStatsService {
   ): Promise<{ leads: UnenrichedLead[]; totalCount: number }> {
     await this.salesforce.connect();
 
-    // Default to this month if no dates provided
-    const now = new Date();
-    const defaultStartDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-    const defaultEndDate = now.toISOString().split('T')[0];
+    // Default to this month if no dates provided (using NY timezone)
+    const now = getNYDate();
+    const monthStart = getNYMonthStart();
+    const defaultStartDate = getNYDateISO(monthStart);
+    const defaultEndDate = getNYDateISO(now);
 
     const startDateStr = startDate || defaultStartDate;
     const endDateStr = endDate || defaultEndDate;
