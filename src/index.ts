@@ -94,8 +94,7 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
-  statement_timeout: 30000,
+  connectionTimeoutMillis: 30000, // Increased for Railway network latency
   // Railway always requires SSL, enable for all railway.internal connections
   ssl: process.env.DATABASE_URL?.includes('railway.internal')
     ? { rejectUnauthorized: false }
