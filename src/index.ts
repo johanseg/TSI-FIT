@@ -96,7 +96,10 @@ const pool = new Pool({
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
   statement_timeout: 30000,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  // Railway always requires SSL, enable for all railway.internal connections
+  ssl: process.env.DATABASE_URL?.includes('railway.internal')
+    ? { rejectUnauthorized: false }
+    : false,
 });
 
 /**
