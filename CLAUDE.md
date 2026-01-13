@@ -37,6 +37,7 @@ LanderLab Form → Workato → Salesforce (create Lead)
 |--------|--------------|----------|
 | **Google Places** | Reviews, rating, address, GMB status | Solvency score, location validation |
 | **People Data Labs** | Employee count, years in business, industry, NAICS, revenue | Solvency score, MQL gating |
+| **Website Validator** | URL validation, domain age (WHOIS), response time | Website scoring, years_in_business fallback |
 | **Website Tech** | Pixel detection (Meta, GA4, TikTok, HubSpot) | Sophistication penalty |
 
 ## Commands
@@ -58,6 +59,7 @@ src/
   services/
     googlePlaces.ts             # Google Places API integration (GMB matching)
     peopleDataLabs.ts           # PDL Company Enrichment API (employees, years in business)
+    websiteValidator.ts         # URL validation + WHOIS domain age lookup (30-day cache)
     websiteTech.ts              # Puppeteer-based tech stack detection (pixels, marketing tools)
     fitScore.ts                 # Fit Score calculation algorithm (0-100)
     scoreMapper.ts              # Maps Fit Score (0-100) → Score__c (0-5) for Facebook/TikTok/Google
@@ -79,6 +81,7 @@ migrations/
   006_fix_enrichments_lead_id.sql         # Fix lead_id reference (use salesforce_lead_id directly)
   007_replace_clay_with_pdl.sql           # Add pdl_data column, migrate from clay_data
   008_add_score_column.sql                # Add score column (0-5) for Score__c mapping
+  009_add_website_validation.sql          # Add website_validation_data column for URL validation cache
 public/
   index.html                    # Internal dashboard (enrichment monitoring, batch operations)
 utility-scripts/                # Standalone utility scripts (analysis, import/export, queries)
@@ -298,9 +301,9 @@ Returns enrichment KPIs for today, yesterday, this week, and last week.
 
 **Solvency Score (0-85 points):**
 - GMB Match: +5 if Google Business Profile found (place_id exists)
-- Website: +15 (custom domain), +5 (GMB/Google URL), +0 (subdomain/social)
+- Website: +15 (custom domain AND valid URL), +5 (GMB/Google URL AND valid), +0 (subdomain/invalid URL/no website)
 - Reviews: +0 (<15), +20 (15-54), +25 (≥55)
-- Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8)
+- Years in business: +0 (<2), +5 (2-3), +10 (4-7), +15 (≥8) - uses PDL, falls back to domain age, then Clay
 - Employees: +0 (<2), +5 (2-4), +15 (>5)
 - Physical location: +10 (storefront/office), +5 (service-area business), +0 (residential/unknown)
 - Marketing spend: +0 ($0), +5 (<$500), +10 (≥$500)
@@ -353,6 +356,7 @@ LOG_LEVEL                 # info | debug | error
 - **Graceful degradation**: Database unavailable → enrichment still works, just not persisted
 - **Field mapping**: `salesforceFieldMapper.ts` centralizes all SF field name mappings
 - **GMB field filling**: Automatically fills missing lead fields (website, address) from Google Business Profile data, with address overwrite protection for high-confidence matches
+- **Website validation caching**: URL validation and domain age results cached in database (30-day TTL) to avoid repeated WHOIS lookups
 - **SOQL injection prevention**: All Salesforce ID inputs are validated using `utils/validation.ts` before use in queries
 - **In-memory log buffer**: Recent logs (max 500 entries) are kept in memory for `/api/setup/logs` endpoint
 - **Batch processing**: Parallel enrichment with configurable concurrency limits to prevent API overload
